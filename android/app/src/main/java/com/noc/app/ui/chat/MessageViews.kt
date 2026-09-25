@@ -350,7 +350,7 @@ private fun StatusNote(m: MessageEntity, onContinue: () -> Unit, onRetry: () -> 
     val (text, action, isError) = when {
         m.status == MessageStatus.ERROR -> Triple(Texts.replyError(m.error), "Tentar de novo" to onRetry, true)
         m.status == MessageStatus.CANCELLED -> Triple("Você interrompeu esta resposta.", (if (m.content.isNotBlank()) "Continuar" to onContinue else "Gerar de novo" to onRetry), false)
-        m.status == MessageStatus.INTERRUPTED -> Triple("A resposta foi interrompida antes do fim.", (if (m.content.isNotBlank()) "Continuar" to onContinue else "Gerar de novo" to onRetry), false)
+        m.status == MessageStatus.INTERRUPTED -> Triple(if (m.error?.startsWith("pc_restarted") == true || m.error?.startsWith("job_unknown") == true) "Seu PC foi reiniciado antes da conclusão." else "A resposta foi interrompida antes do fim.", (if (m.content.isNotBlank()) "Continuar" to onContinue else "Gerar de novo" to onRetry), false)
         m.finishReason == "length" -> Triple("A resposta atingiu o limite de tokens.", "Continuar" to onContinue, false)
         else -> return
     }

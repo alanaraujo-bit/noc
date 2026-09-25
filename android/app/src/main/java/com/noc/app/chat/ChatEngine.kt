@@ -76,7 +76,7 @@ data class LiveReply(
     /** Conexão caiu no meio: a tarefa continua no PC e retomamos ao voltar. */
     val detached: Boolean = false,
 ) {
-    enum class Phase { SENDING, UPLOADING, QUEUED, LOADING, PREPARING, THINKING, GENERATING, RECOVERING }
+    enum class Phase { SENDING, UPLOADING, QUEUED, LOADING, PREPARING, THINKING, GENERATING, RECOVERING, WAITING_LM }
 
     /** Fase legível para a interface e a notificação. */
     fun describe(online: Boolean): String = when {
@@ -91,6 +91,7 @@ data class LiveReply(
             Phase.THINKING -> "Pensando…"
             Phase.GENERATING -> "Gerando…"
             Phase.RECOVERING -> "Retomando no PC…"
+            Phase.WAITING_LM -> "Esperando o LM Studio ficar pronto no PC…"
         }
     }
 }
@@ -645,6 +646,7 @@ class ChatEngine(
                         "thinking" -> phase(LiveReply.Phase.THINKING)
                         "generating" -> phase(LiveReply.Phase.GENERATING)
                         "recovering" -> phase(LiveReply.Phase.RECOVERING)
+                        "waiting_lm" -> phase(LiveReply.Phase.WAITING_LM)
                     }
                     if (e.bool("reset") == true) next = next.copy(content = "", reasoning = "", tokens = 0, reasoningStartedAt = null, reasoningMs = null)
                     e.str("r")?.let { r ->

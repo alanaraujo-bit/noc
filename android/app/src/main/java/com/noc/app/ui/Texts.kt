@@ -92,6 +92,10 @@ object Texts {
         val code = raw?.substringBefore('|') ?: ""
         val detail = raw?.substringAfter('|', "") ?: ""
         return when {
+            code == "lm_offline_final" -> "O LM Studio não voltou a funcionar no PC. Abra o LM Studio (ou reinicie o PC) e toque em tentar de novo."
+            code == "no_vision" -> "Este modelo não entende imagens. Escolha um modelo com visão (ex.: Rápido ou Inteligente) e tente de novo."
+            code == "stalled" -> "O modelo parou de responder no PC. Tente de novo."
+            code == "pc_restarted" -> "Seu PC foi reiniciado antes da conclusão."
             code == "lm_offline" || code == "lm_unreachable" -> "O LM Studio não está rodando no PC. Abra o LM Studio ou toque em “Iniciar LM Studio” na tela inicial."
             code == "model_not_found" -> "Esse modelo não existe mais no PC. Escolha outro modelo."
             code == "load_failed" -> "O PC não conseguiu carregar o modelo" + (if (detail.contains("memory", true) || detail.contains("VRAM", true)) " — falta memória de vídeo." else ".") + " Tente um modelo menor ou um contexto menor."

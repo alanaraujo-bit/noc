@@ -202,8 +202,9 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
             // Só religa quando o servidor está de fato fora (porta fechada), ou travado há 2 min sem nada rodando.
             // Nunca durante uma carga de modelo ou geração: religar o servidor mata o que está em andamento.
             var hung = probe.Busy && Models.ConsecutiveBusy >= 24;
-            var idle = Models.Op == ModelOpState.Idle && Jobs.Active.All(j => j.State == JobState.Queued) && !Bench.Busy;
-            if ((probe.State == LmState.Stopped || hung) && idle && Settings.KeepLmServerAlive && Settings.AutoStartLmServer)
+            var idle = Models.Op == ModelOpState.Idle && Jobs.Active.All(j => j.State == JobState.Queued || j.Phase is "waiting_lm" or "recovering") && !Bench.Busy;
+            // servidor parado (porta fechada) não está atendendo ninguém: religar não atrapalha nada
+            if ((probe.State == LmState.Stopped || (hung && idle)) && Settings.KeepLmServerAlive && Settings.AutoStartLmServer)
             {
                 if (hung) Diag.Write("lm", "LM Studio sem responder há 2 min; religando o servidor");
                 // espera crescente entre tentativas (30 s, 60 s, 120 s… até 10 min)
@@ -213,6 +214,7 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
                     _lastLmRestart = DateTimeOffset.Now;
                     Activity("Religando o servidor do LM Studio…", "lm");
                     var (ok, _) = await StartLmServerAsync(_cts.Token);
+                    Diag.Write("lm", ok ? "servidor do LM Studio religado" : "falha ao religar o servidor do LM Studio");
                     _lmRestartFailures = ok ? 0 : _lmRestartFailures + 1;
                     if (ok) _preloadDone = false;
                 }

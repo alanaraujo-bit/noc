@@ -413,6 +413,103 @@ public class Phase2Tests(ITestOutputHelper log)
         Assert.False(p.Host.Models.Find("gemma4-26b-a4b-uncensored")!.Loaded);
     }
 
+    private static async Task Lms(string args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo(Noc.Core.LmStudio.LmStudioLocator.LmsPath, args) { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        await p.WaitForExitAsync();
+    }
+
+    private async Task<(string Partial, int Seq)> WaitSomeContent(TestClient c, string job, int chars)
+    {
+        var partial = new StringBuilder();
+        var seq = 0;
+        while (partial.Length < chars)
+        {
+            var evt = await c.Events.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromMinutes(3));
+            if (evt["e"]!.GetValue<string>() != "job" || evt["d"]!["job"]!.GetValue<string>() != job) continue;
+            seq = evt["d"]!["seq"]!.GetValue<int>();
+            if (evt["d"]!["c"] is { } cc) partial.Append(cc.GetValue<string>());
+        }
+        return (partial.ToString(), seq);
+    }
+
+    [Theory]
+    [InlineData("server stop")]
+    [InlineData("unload")]
+    public async Task Generation_survives_lm_studio_failure_midway(string what)
+    {
+        if (!Enabled) return;
+        await using var p = await PairedAsync();
+        p.Host.Settings.KeepLmServerAlive = true;
+        p.Host.Settings.AutoStartLmServer = true;
+        var job = Guid.NewGuid().ToString();
+        await p.Client.CallAsync("chat.start", new JsonObject
+        {
+            ["job"] = job, ["model"] = "tier:fast",
+            ["messages"] = new JsonArray(UserText("Liste os números de 1 a 150, um por linha, sem mais nada.")),
+            ["params"] = new JsonObject { ["temperature"] = 0, ["max_tokens"] = 1500, ["reasoning"] = "off" },
+        }, TimeSpan.FromMinutes(3));
+        var (partial, seq) = await WaitSomeContent(p.Client, job, 40);
+        await Lms(what == "unload" ? "unload --all" : "server stop");
+        log.WriteLine($"{what} com {partial.Length} caracteres");
+        var (content, _, end, events) = await CollectFrom(p.Client, job, seq, partial, TimeSpan.FromMinutes(6));
+        var phases = events.Where(e => e["phase"] is not null).Select(e => e["phase"]!.GetValue<string>()).ToList();
+        log.WriteLine($"fases: {string.Join(" → ", phases)} | fim: {end.ToJsonString()}");
+        Assert.Equal("stop", end["reason"]!.GetValue<string>());
+        var lines = content.Split((char)10).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        Assert.Equal(lines.Count, lines.Distinct().Count());
+        log.WriteLine("fim do texto: " + string.Join(" ", lines.TakeLast(8)) + $" ({lines.Count} linhas)");
+        // continuou bem além do ponto do corte, em sequência (o modelo decide onde parar a lista)
+        var nums = lines.Select(l => int.TryParse(l, out var n) ? n : -1).Where(n => n > 0).ToList();
+        Assert.True(nums.Max() >= 80, "parou cedo demais: " + nums.Max());
+        Assert.Equal(Enumerable.Range(1, nums.Count), nums);
+    }
+
+    [Fact]
+    public async Task Cold_boot_with_lm_studio_down_resumes_tasks()
+    {
+        if (!Enabled) return;
+        using var device = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var p = await PairedAsync(device: device);
+        var root = AppPaths.Root;
+        var job = Guid.NewGuid().ToString();
+        await p.Client.CallAsync("chat.start", new JsonObject
+        {
+            ["job"] = job, ["model"] = "tier:fast",
+            ["messages"] = new JsonArray(UserText("Liste os números de 1 a 120, um por linha, sem mais nada.")),
+            ["params"] = new JsonObject { ["temperature"] = 0, ["max_tokens"] = 1200, ["reasoning"] = "off" },
+        }, TimeSpan.FromMinutes(3));
+        var (partial, seq) = await WaitSomeContent(p.Client, job, 40);
+        // "desliga o PC": Companion some e o LM Studio para
+        await p.Client.DisposeAsync();
+        await p.Host.DisposeAsync();
+        await Lms("server stop");
+        // "liga o PC": o Companion inicia como no boot (religar o LM Studio é com ele)
+        AppPaths.Root = root;
+        var host2 = new CompanionHost();
+        host2.Settings.VoiceEnabled = false;
+        host2.Settings.AutoImportModels = false;
+        host2.Settings.RemoteEnabled = false;
+        host2.Settings.LanPort = 47990 + Random.Shared.Next(0, 8);
+        host2.Settings.AutoStartLmServer = true;
+        host2.Settings.KeepLmServerAlive = true;
+        await host2.StartAsync();
+        await using var _ = host2;
+        await using var c2 = await TestClient.ConnectAsync($"ws://127.0.0.1:{host2.Lan.Port}/v1/ws", HandshakeMode.Session, th => TestClient.SessionAuth(th, device));
+        var sub = await c2.CallAsync("chat.subscribe", new JsonObject { ["job"] = job, ["from"] = seq });
+        Assert.True(sub["ok"]!.GetValue<bool>(), sub.ToJsonString());
+        var (content, _, end, events) = await CollectFrom(c2, job, seq, partial, TimeSpan.FromMinutes(6));
+        var phases = events.Where(e => e["phase"] is not null).Select(e => e["phase"]!.GetValue<string>()).ToList();
+        log.WriteLine($"fases: {string.Join(" → ", phases)} | fim: {end.ToJsonString()}");
+        Assert.Equal("stop", end["reason"]!.GetValue<string>());
+        var lines = content.Split((char)10).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        Assert.Equal(lines.Count, lines.Distinct().Count());
+        var nums2 = lines.Select(l => int.TryParse(l, out var n) ? n : -1).Where(n => n > 0).ToList();
+        Assert.True(nums2.Max() >= 60, "parou cedo demais: " + nums2.Max());
+        Assert.Equal(Enumerable.Range(1, nums2.Count), nums2);
+    }
+
     internal static byte[] WavPcm(byte[] wav)
     {
         var o = 12;

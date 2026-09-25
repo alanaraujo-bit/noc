@@ -276,7 +276,7 @@ public sealed class JobManager : IDisposable
 {
     public const int MaxParallelSameModel = 2;
     private const int MaxQueued = 32;
-    private const int MaxAutoRecover = 2;
+    private const int MaxAutoRecover = 3;
     private static readonly TimeSpan Retention = TimeSpan.FromHours(24);
     private static readonly TimeSpan MemoryRetention = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan StallTimeout = TimeSpan.FromMinutes(3);
@@ -568,8 +568,16 @@ public sealed class JobManager : IDisposable
         var resumeFromContent = job.Content;
         try
         {
-            await _models.RefreshAsync(ct);
-            var current = _models.Find(job.Model) ?? throw new JobFailure("model_not_found", "Este modelo não está mais no PC.");
+            await WaitForLmAsync(job, ct);
+            var current = _models.Find(job.Model);
+            // logo depois de ligar, o LM Studio pode levar alguns segundos para listar todos os modelos
+            for (var i = 0; current is null && i < 10; i++)
+            {
+                await Task.Delay(1500, ct);
+                await _models.RefreshAsync(ct);
+                current = _models.Find(job.Model);
+            }
+            if (current is null) throw new JobFailure("model_not_found", "Este modelo não está mais no PC.");
             int? wantContext = null;
             if (!current.Loaded)
             {
@@ -635,12 +643,21 @@ public sealed class JobManager : IDisposable
         catch (LmStudioException e)
         {
             // LM Studio caiu ou o modelo foi descarregado no meio: tenta recuperar sozinho
-            if (e.Code is "lm_unreachable" or "lm_error" && !job.CancelRequested && job.Attempts < MaxAutoRecover &&
+            if (e.Code is "lm_unreachable" or "lm_error" or "lm_offline" && !job.CancelRequested && job.Attempts < MaxAutoRecover &&
                 await TryRecoverAsync(job, e))
                 return;
             reason = "error";
             errorCode = e.Code;
             errorMsg = e.Message;
+        }
+        catch (Exception e) when (!job.CancelRequested && !_disposed && e is IOException or HttpRequestException)
+        {
+            // conexão com o LM Studio caiu no meio do streaming (servidor reiniciou, modelo descarregado)
+            if (job.Attempts < MaxAutoRecover && await TryRecoverAsync(job, new LmStudioException("lm_unreachable", e.Message)))
+                return;
+            reason = "error";
+            errorCode = "lm_unreachable";
+            errorMsg = "O LM Studio parou de responder no meio da resposta.";
         }
         catch (Exception e)
         {
@@ -694,14 +711,9 @@ public sealed class JobManager : IDisposable
     {
         job.Attempts++;
         Trace?.Invoke($"tarefa {Short(job.Id)} caiu ({e.Code}: {e.Message}); tentativa de recuperação {job.Attempts}");
-        Log?.Invoke($"A geração caiu ({e.Message}); tentando retomar", "warn");
+        Log?.Invoke("A geração foi interrompida no PC; retomando sozinho", "warn");
         job.SetPhase(JobState.Loading, "recovering", new JsonObject { ["why"] = "lm" });
-        for (var i = 0; i < 30 && !job.CancelRequested; i++)
-        {
-            var probe = await _models.RefreshAsync(CancellationToken.None);
-            if (probe.State == LmState.Running) break;
-            await Task.Delay(2000);
-        }
+        await Task.Delay(1500); // a próxima rodada espera o LM Studio voltar (WaitForLmAsync)
         if (job.CancelRequested) return false;
         if (job.Content.Length == 0 && job.Tokens > 0) job.Reset("recovering");
         job.Cts = new CancellationTokenSource();
@@ -709,6 +721,32 @@ public sealed class JobManager : IDisposable
         job.SetPhase(JobState.Queued, "queued");
         Pump();
         return true;
+    }
+
+    /// <summary>
+    /// Espera o LM Studio estar de pé (depois de ligar o PC ou se o servidor caiu). A tarefa fica em
+    /// "Aguardando o LM Studio" — sem falhar — enquanto o monitor de saúde religa o servidor.
+    /// </summary>
+    private async Task WaitForLmAsync(ChatJob job, CancellationToken ct)
+    {
+        var probe = await _models.RefreshAsync(ct);
+        if (probe.State == LmState.Running) return;
+        job.SetPhase(JobState.Loading, "waiting_lm");
+        Changed?.Invoke();
+        var until = DateTimeOffset.Now + TimeSpan.FromMinutes(10);
+        while (DateTimeOffset.Now < until)
+        {
+            await Task.Delay(2000, ct);
+            probe = await _models.RefreshAsync(ct);
+            if (probe.State == LmState.Running) return;
+        }
+        throw new LmStudioException("lm_offline_final", "O LM Studio não voltou a funcionar no PC.");
+    }
+
+    /// <summary>Alguma tarefa esperando o LM Studio voltar (o monitor de saúde pode religá-lo sem atrapalhar nada).</summary>
+    public bool WaitingForLm
+    {
+        get { lock (_lock) return _jobs.Values.Any(j => !j.IsFinished && j.Phase is "waiting_lm" or "recovering"); }
     }
 
     private void Watchdog()
