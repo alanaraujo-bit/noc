@@ -57,7 +57,7 @@ public sealed class LogItem
 }
 
 /// <summary>Estado da janela do Companion. Atualiza a partir dos eventos do CompanionHost.</summary>
-public sealed class MainViewModel : Observable
+public sealed partial class MainViewModel : Observable
 {
     private readonly CompanionHost _host;
     private readonly Dispatcher _ui;
@@ -82,6 +82,7 @@ public sealed class MainViewModel : Observable
         OpenLmStudio = new Command(() => { if (LmStudioLocator.AppPath() is { } p) Shell.Open(p); else Shell.Open("https://lmstudio.ai"); });
         TestRemote = new Command(() => { _ = TestRemoteAsync(); });
         Navigate = new Command(p => Page = p as string ?? "overview");
+        InitModels();
 
         _host.Changed += QueueRefresh;
         _host.ActivityAdded += e => _ui.BeginInvoke(() => PrependActivity(e));
@@ -222,13 +223,13 @@ public sealed class MainViewModel : Observable
         // Modelo
         if (_host.Models.Op == ModelOpState.Loading)
         {
-            ModelTitle = "Carregando " + (_host.Models.Find(_host.Models.OpModel ?? "")?.DisplayName ?? _host.Models.OpModel);
+            ModelTitle = "Carregando " + _host.Models.DisplayName(_host.Models.OpModel ?? "") + "…";
             ModelDetail = _host.Models.OpStarted is { } s ? $"há {(int)(DateTimeOffset.Now - s).TotalSeconds} s" : "";
         }
         else if (loaded.Count > 0)
         {
             var m = loaded[0];
-            ModelTitle = m.DisplayName;
+            ModelTitle = _host.Models.DisplayName(m.Key);
             ModelDetail = string.Join(" · ", new[] { m.Params, m.Quantization, $"{m.Instances[0].ContextLength / 1024}k de contexto" }.Where(x => !string.IsNullOrEmpty(x)));
         }
         else
@@ -293,12 +294,19 @@ public sealed class MainViewModel : Observable
         // Atividade
         var jobs = _host.Jobs.Active;
         Generating = jobs.Count > 0;
-        ActivityNow = jobs.Count switch
-        {
-            0 => "",
-            _ => (jobs[0].State == Core.Jobs.JobState.Loading ? "Carregando modelo para responder" : "Gerando resposta") +
-                 (jobs[0].LiveTokensPerSecond is { } tps ? $" · {tps:0} tokens/s" : "") + (jobs.Count > 1 ? $" (+{jobs.Count - 1})" : ""),
-        };
+        var runningJob = jobs.FirstOrDefault(j => j.State != Core.Jobs.JobState.Queued) ?? jobs.FirstOrDefault();
+        var queued = jobs.Count(j => j.State == Core.Jobs.JobState.Queued);
+        ActivityNow = runningJob is null ? "" :
+            (runningJob.Phase switch
+            {
+                "queued" => "Na fila",
+                "loading" or "starting" => "Carregando " + _host.Models.DisplayName(runningJob.Model) + " para responder",
+                "preparing" => runningJob.Images > 0 ? "Analisando imagem com " + _host.Models.DisplayName(runningJob.Model) : "Lendo a conversa",
+                "thinking" => _host.Models.DisplayName(runningJob.Model) + " está pensando",
+                "recovering" => "Retomando uma resposta",
+                _ => _host.Models.DisplayName(runningJob.Model) + " está respondendo",
+            }) +
+            (runningJob.LiveTokensPerSecond is { } tps ? $" · {tps:0} tokens/s" : "") + (queued > 0 ? $" · {queued} na fila" : "");
 
         Headline = probe.State switch
         {
@@ -335,6 +343,7 @@ public sealed class MainViewModel : Observable
             foreach (var i in items) Devices.Add(i);
         }
         NoDevices = Devices.Count == 0;
+        RefreshModels();
         RefreshPairing();
     }
 
@@ -529,6 +538,12 @@ public sealed class MainViewModel : Observable
     private string _testResult = "";
     public string TestResult { get => _testResult; set => Set(ref _testResult, value); }
 
+    private bool _setVoice, _setAutoImport, _setDownloads, _setKeepLm;
+    public bool SetVoice { get => _setVoice; set { if (Set(ref _setVoice, value)) SaveSoon(); } }
+    public bool SetAutoImport { get => _setAutoImport; set { if (Set(ref _setAutoImport, value)) SaveSoon(); } }
+    public bool SetDownloads { get => _setDownloads; set { if (Set(ref _setDownloads, value)) SaveSoon(); } }
+    public bool SetKeepLm { get => _setKeepLm; set { if (Set(ref _setKeepLm, value)) SaveSoon(); } }
+
     private void LoadSettings()
     {
         _loading = true;
@@ -541,6 +556,10 @@ public sealed class MainViewModel : Observable
         SetAutoLm = s.AutoStartLmServer;
         SetSingle = s.SingleModel;
         SetContext = s.DefaultContextLength.ToString();
+        SetVoice = s.VoiceEnabled;
+        SetAutoImport = s.AutoImportModels;
+        SetDownloads = s.AllowComponentDownloads;
+        SetKeepLm = s.KeepLmServerAlive;
         SetTheme = s.Theme;
         _loading = false;
     }
@@ -562,6 +581,12 @@ public sealed class MainViewModel : Observable
             s.LanEnabled = SetLan;
             s.AutoStartLmServer = SetAutoLm;
             s.SingleModel = SetSingle;
+            var voiceOn = SetVoice && !s.VoiceEnabled;
+            s.VoiceEnabled = SetVoice;
+            s.AutoImportModels = SetAutoImport;
+            s.AllowComponentDownloads = SetDownloads;
+            s.KeepLmServerAlive = SetKeepLm;
+            if (voiceOn) _ = Task.Run(() => _host.Stt.EnsureReadyAsync(CancellationToken.None));
             s.Theme = SetTheme;
             if (int.TryParse(SetContext, out var ctx)) s.DefaultContextLength = ctx;
             await _host.ApplySettingsAsync();

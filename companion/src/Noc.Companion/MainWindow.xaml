@@ -99,6 +99,9 @@
                 <RadioButton Style="{StaticResource NavItem}" AutomationProperties.Name="Visão geral" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=overview}">
                     <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE80F;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Visão geral" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
                 </RadioButton>
+                <RadioButton Style="{StaticResource NavItem}" AutomationProperties.Name="Modelos" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=models}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE8F1;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Modelos" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
+                </RadioButton>
                 <RadioButton Style="{StaticResource NavItem}" AutomationProperties.Name="Dispositivos" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=devices}">
                     <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE8EA;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Dispositivos" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
                 </RadioButton>
@@ -153,7 +156,44 @@
 
                     <Grid Margin="0,22,0,0">
                         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="14"/><RowDefinition/><RowDefinition Height="14"/><RowDefinition/></Grid.RowDefinitions>
+                        <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="14"/><RowDefinition/><RowDefinition Height="14"/><RowDefinition/><RowDefinition Height="14"/><RowDefinition/></Grid.RowDefinitions>
+
+                        <!-- Voz -->
+                        <Border Style="{StaticResource Tile}" Grid.Row="6" Grid.Column="0">
+                            <StackPanel>
+                                <TextBlock Text="VOZ" Style="{StaticResource Label}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Ellipse Style="{StaticResource Dot}" Fill="{Binding VoiceColor}"/>
+                                    <TextBlock Text="{Binding VoiceTitle}" Style="{StaticResource Title}" Margin="10,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding VoiceDetail}" Style="{StaticResource Body}" Margin="18,4,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Modelos (atalho) -->
+                        <Border Style="{StaticResource Tile}" Grid.Row="6" Grid.Column="2">
+                            <StackPanel>
+                                <TextBlock Text="PERFIS" Style="{StaticResource Label}"/>
+                                <ItemsControl ItemsSource="{Binding TierRows}" Margin="0,8,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" Margin="0,2">
+                                                <TextBlock Text="{Binding Symbol}" Style="{StaticResource Base}" Foreground="{DynamicResource Accent}" Width="20"/>
+                                                <TextBlock Text="{Binding Label}" Style="{StaticResource Base}" FontWeight="Medium" Width="90"/>
+                                                <ItemsControl ItemsSource="{Binding Options}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding Name}" Style="{StaticResource Body}" Visibility="{Binding Selected, Converter={StaticResource Vis}}"/>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button Style="{StaticResource Ghost}" Content="Gerenciar modelos" HorizontalAlignment="Left" Margin="-4,6,0,0" Command="{Binding Navigate}" CommandParameter="models"/>
+                            </StackPanel>
+                        </Border>
 
                         <!-- LM Studio -->
                         <Border Style="{StaticResource Tile}" Grid.Row="0" Grid.Column="0">
@@ -235,6 +275,122 @@
 
                     <TextBlock Style="{StaticResource Body}" Margin="4,24,0,0" FontSize="12.5"
                                Text="Suas conversas ficam no seu celular e a inferência acontece aqui. O serviço remoto só repassa dados cifrados — ele não consegue ler nada."/>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Modelos -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=models}">
+                <StackPanel Margin="28,44,36,32">
+                    <Grid>
+                        <StackPanel>
+                            <TextBlock Text="Modelos" Style="{StaticResource Display}"/>
+                            <TextBlock Text="O Noc organiza, ajusta e carrega sozinho. Aqui você escolhe quem responde em cada perfil." Style="{StaticResource Body}" Margin="0,4,230,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <Button Style="{StaticResource Secondary}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Height="38" Content="Procurar modelos novos" Command="{Binding ScanModels}"/>
+                    </Grid>
+
+                    <Border Style="{StaticResource Tile}" Margin="0,22,0,0">
+                        <StackPanel>
+                            <TextBlock Text="CARREGADO AGORA" Style="{StaticResource Label}"/>
+                            <TextBlock Text="{Binding ModelTitle}" Style="{StaticResource Title}" Margin="0,8,0,0"/>
+                            <TextBlock Text="{Binding ModelDetail}" Style="{StaticResource Mono}" Margin="0,5,0,0"/>
+                            <TextBlock Text="{Binding GpuDetail}" Style="{StaticResource Mono}" Margin="0,5,0,0"/>
+                            <TextBlock Text="{Binding BenchLine}" Style="{StaticResource Body}" Margin="0,5,0,0" Visibility="{Binding BenchLine, Converter={StaticResource TextVis}}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="PERFIS" Style="{StaticResource Label}" Margin="4,26,0,10"/>
+                    <Border Style="{StaticResource Tile}" Padding="0">
+                        <ItemsControl ItemsSource="{Binding TierRows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource SettingRow}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Symbol}" Style="{StaticResource Title}" Foreground="{DynamicResource Accent}" Width="24"/>
+                                                <TextBlock Text="{Binding Label}" Style="{StaticResource Title}"/>
+                                                <TextBlock Text="{Binding Blurb}" Style="{StaticResource Body}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                            <ItemsControl ItemsSource="{Binding Options}" Margin="20,10,0,0">
+                                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <RadioButton Style="{StaticResource Chip}" Content="{Binding Name}" GroupName="{Binding Group}" IsChecked="{Binding Selected}" Margin="0,0,8,8"/>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Border>
+
+                    <TextBlock Text="PRONTO AO LIGAR O PC" Style="{StaticResource Label}" Margin="4,26,0,4"/>
+                    <TextBlock Text="Este modelo fica carregado assim que o PC liga, para a primeira mensagem sair na hora." Style="{StaticResource Body}" Margin="4,0,0,10"/>
+                    <ItemsControl ItemsSource="{Binding DefaultOptions}">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <RadioButton Style="{StaticResource Chip}" Content="{Binding Name}" GroupName="{Binding Group}" IsChecked="{Binding Selected}" Margin="0,0,8,8"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <StackPanel Visibility="{Binding HasLibrary, Converter={StaticResource Vis}}">
+                        <TextBlock Text="ENCONTRADOS NO SEU PC" Style="{StaticResource Label}" Margin="4,26,0,10"/>
+                        <Border Style="{StaticResource Tile}" Padding="0">
+                            <ItemsControl ItemsSource="{Binding LibraryRows}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource SettingRow}">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding File}" Style="{StaticResource Title}" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Detail}" Style="{StaticResource Body}" Margin="0,3,0,0"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Border>
+                    </StackPanel>
+
+                    <TextBlock Text="SEUS MODELOS" Style="{StaticResource Label}" Margin="4,26,0,10"/>
+                    <ItemsControl ItemsSource="{Binding ModelRows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource Tile}" Margin="0,0,0,12">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Name}" Style="{StaticResource Title}" ToolTip="{Binding Technical}"/>
+                                                <TextBlock Text="{Binding Badges}" Style="{StaticResource Body}" Foreground="{DynamicResource Accent}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Caps}" Style="{StaticResource Mono}" Margin="0,4,0,0"/>
+                                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                                <Ellipse Style="{StaticResource Dot}" Fill="{Binding StatusColor}"/>
+                                                <TextBlock Text="{Binding Status}" Style="{StaticResource Body}" Margin="8,0,0,0"/>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Bench}" Style="{StaticResource Mono}" Margin="0,6,0,0" Visibility="{Binding Bench, Converter={StaticResource TextVis}}"/>
+                                            <TextBlock Text="{Binding Error}" Style="{StaticResource Body}" Foreground="{DynamicResource Err}" Margin="0,6,0,0" TextWrapping="Wrap" Visibility="{Binding Error, Converter={StaticResource TextVis}}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource Ghost}" Content="{Binding Star}" FontSize="18" ToolTip="Favorito"
+                                                    Command="{Binding DataContext.FavoriteModel, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Key}"/>
+                                            <Button Style="{StaticResource Ghost}" Content="Testar" IsEnabled="{Binding Busy, Converter={StaticResource Not}}"
+                                                    Command="{Binding DataContext.BenchModel, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Key}"/>
+                                            <Button Style="{StaticResource Secondary}" Content="Descarregar" Height="34" Margin="6,0,0,0" Visibility="{Binding Loaded, Converter={StaticResource Vis}}"
+                                                    Command="{Binding DataContext.UnloadModel, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Key}"/>
+                                            <Button Style="{StaticResource Primary}" Content="Carregar" Height="34" Padding="16,0" Margin="6,0,0,0" Visibility="{Binding Loaded, Converter={StaticResource Not}}"
+                                                    IsEnabled="{Binding Busy, Converter={StaticResource Not}}"
+                                                    Command="{Binding DataContext.LoadModel, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Key}"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </ScrollViewer>
 
@@ -416,16 +572,38 @@
                             </Border>
                             <Border Style="{StaticResource SettingRow}">
                                 <Grid>
-                                    <StackPanel>
-                                        <TextBlock Text="Contexto padrão" Style="{StaticResource Title}"/>
-                                        <TextBlock Text="Usado quando o celular pede um modelo sem definir o contexto." Style="{StaticResource Body}"/>
+                                    <StackPanel Margin="0,0,70,0">
+                                        <TextBlock Text="Ditado por voz" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Transcreve a fala do celular aqui, na GPU (Whisper). Usa cerca de 1 GB de VRAM." Style="{StaticResource Body}"/>
                                     </StackPanel>
-                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                        <RadioButton Style="{StaticResource Chip}" Content="8k" GroupName="ctx" IsChecked="{Binding SetContext, Converter={StaticResource Eq}, ConverterParameter=8192}"/>
-                                        <RadioButton Style="{StaticResource Chip}" Content="16k" GroupName="ctx" IsChecked="{Binding SetContext, Converter={StaticResource Eq}, ConverterParameter=16384}"/>
-                                        <RadioButton Style="{StaticResource Chip}" Content="32k" GroupName="ctx" IsChecked="{Binding SetContext, Converter={StaticResource Eq}, ConverterParameter=32768}"/>
-                                        <RadioButton Style="{StaticResource Chip}" Content="64k" GroupName="ctx" IsChecked="{Binding SetContext, Converter={StaticResource Eq}, ConverterParameter=65536}"/>
+                                    <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetVoice}"/>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel Margin="0,0,70,0">
+                                        <TextBlock Text="Adicionar modelos sozinho" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="GGUFs que aparecerem em Downloads entram no LM Studio automaticamente (sem mover o arquivo)." Style="{StaticResource Body}"/>
                                     </StackPanel>
+                                    <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetAutoImport}"/>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel Margin="0,0,70,0">
+                                        <TextBlock Text="Baixar componentes que faltam" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Ex.: o componente de visão oficial de um modelo, ou o modelo de voz. Vem de fontes públicas e é conferido." Style="{StaticResource Body}"/>
+                                    </StackPanel>
+                                    <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetDownloads}"/>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel Margin="0,0,70,0">
+                                        <TextBlock Text="Manter o LM Studio no ar" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Se o servidor cair, o Noc liga de novo (nunca no meio de uma resposta)." Style="{StaticResource Body}"/>
+                                    </StackPanel>
+                                    <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetKeepLm}"/>
                                 </Grid>
                             </Border>
                             <Border Style="{StaticResource SettingRow}" BorderThickness="0">
