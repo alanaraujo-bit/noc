@@ -41,7 +41,9 @@ case "$1" in
   shot)
     mkdir -p "$ROOT/shots"; $ADB exec-out screencap -p > "$ROOT/shots/$2.png"; echo "$ROOT/shots/$2.png" ;;
   install)
-    (cd "$ROOT/android" && ./gradlew.bat :app:assembleDebug --console=plain -q 2>&1 | grep -E "^e: |FAIL" || true)
+    # falha de build para aqui (antes, o APK velho era instalado e parecia que a mudança não funcionava)
+    OUT=$(cd "$ROOT/android" && ./gradlew.bat :app:assembleDebug --console=plain -q 2>&1)
+    if echo "$OUT" | grep -qE "^e: |FAIL"; then echo "$OUT" | grep -E "^e: |FAIL|wrong" | head -20; echo "BUILD FALHOU: nada instalado"; exit 1; fi
     $ADB install -r "$ROOT/android/app/build/outputs/apk/debug/app-debug.apk" | tail -1 ;;
   tap|hold)
     # toca no centro do elemento cujo texto (ou content-desc) contém $2

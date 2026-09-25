@@ -853,6 +853,7 @@ public sealed class Session : IAsyncDisposable
             Detail = detail is { Length: > 0 } ? detail : null, Upscale = p["upscale"]?.GetValue<int>() is 2 or 4 ? p["upscale"]!.GetValue<int>() : op == "hd" ? 2 : 0,
             Hd = op == "hd" || (p["hd"]?.GetValue<bool>() ?? false), Loras = loraUses,
             Parent = source is not null && source.StartsWith("img:") ? source[4..] : null,
+            Context = srcMeta?["prompt"]?.GetValue<string>() is { Length: > 0 } sp && op is "inpaint" or "outpaint" ? sp : null,
         };
     }
 

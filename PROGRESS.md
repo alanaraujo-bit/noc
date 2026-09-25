@@ -257,3 +257,14 @@ Testes com o APK de release (R8, com.noc.app 1.1.0) pareado ao Companion 1.1.0 i
 - NoobAI: "trailing" com zero-SNR saía escuro (brilho médio 30); "leading" (exemplo oficial) + rescale 0,5 → 47. Padrão: leading.
 - Prompt Compiler (Qwen3-4B fp8 residente, 1–4 s): tags Danbooru reais; bug corrigido — o reescritor inventava estilo
   ("realistic art style") e roupas; agora exemplos no sistema + filtro de estilo não pedido + contagem (1girl/2boys/no humans).
+## Testes no app (emulador + DevHost, 2026-09-25)
+- Criar imagem → Motor → ◈ NoobAI: pedido em português → "Adaptando o pedido para o modelo…" → gerada em 34 s (Qwen saiu da GPU,
+  NoobAI carregou em 11 s). Galeria Criações com filtros Edições/Modelo/Conversa; migração Room v3→v4 sem perdas.
+- Expandir (foto do Z-Image) → roteado ao RealVisXL, 832×1216 → 2080×1216 sem costura. BUGS corrigidos: (1) tamanhos múltiplos
+  de 8 quebravam Z-Image/FLUX ("Height must be divisible by 16"); (2) o pipeline de inpaint do Z-Image deixa costura dura na
+  expansão (medido na saída crua) → expansão de imagens do Z-Image/FLUX vai para o especialista SDXL da categoria;
+  (3) o cartão mostrava o tamanho da origem e cortava a imagem expandida.
+- Editar com pincel (gato): BUGS corrigidos: (1) a máscara PNG do celular é opaca e o worker lia o alfa → trocava a imagem
+  inteira (agora o alfa só vale quando varia); (2) sem contexto, "um gorro de lã vermelho" virou uma criança de gorro → edições
+  reescritas com a cena da imagem de origem (modo "edit"): "an orange cat ... wearing a red wool hat" ✔, resto intacto ✔.
+- tools/dev.sh install agora para quando o build falha (antes instalava o APK velho em silêncio).

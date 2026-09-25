@@ -247,10 +247,16 @@ def load_rgb(path):
 
 
 def load_mask(path, size):
-    """Máscara: branco = mudar. Aceita PNG com alfa (pintado no celular) ou tons de cinza."""
+    """
+    Máscara: branco = mudar. Aceita tons de cinza/RGB (branco no preto) ou PNG transparente em que o pintado é opaco.
+    O alfa só vale quando varia: um PNG opaco (o do celular) é lido pelo brilho — senão a máscara vira a imagem inteira.
+    """
     m = Image.open(path)
-    if m.mode in ("RGBA", "LA"):
-        m = m.split()[-1]
+    if m.mode in ("RGBA", "LA", "PA") or (m.mode == "P" and "transparency" in m.info):
+        m = m.convert("RGBA")
+        alpha = m.split()[-1]
+        lo, hi = alpha.getextrema()
+        m = alpha if lo < 128 <= hi else m.convert("L")
     m = m.convert("L")
     if m.size != size:
         m = m.resize(size, Image.NEAREST)

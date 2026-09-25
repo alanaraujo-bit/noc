@@ -95,15 +95,30 @@ fun ImageRequestBubble(ui: MessageUi, onLongPress: () -> Unit, onBranch: (Int) -
     val c = Noc.colors
     val m = ui.entity
     val job = remember(m.imageJson) { ImageJob.decode(m.imageJson) }
+    val o = job?.options
+    val edit = job?.edit
     Column(Modifier.fillMaxWidth().padding(start = 48.dp), horizontalAlignment = Alignment.End) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp, end = 4.dp)) {
             Icon(Icons.Rounded.AutoAwesome, null, tint = c.accent, modifier = Modifier.size(13.dp))
             Spacer(Modifier.width(5.dp))
             Text(
-                listOfNotNull("Criar imagem", job?.options?.engine?.let { com.noc.app.chat.ImageOptions.engineLabel(it).substringAfter(' ') },
-                    job?.options?.count?.takeIf { it > 1 }?.let { "$it imagens" }, "melhorada".takeIf { job?.options?.enhance == true }).joinToString(" · "),
+                if (edit != null) listOfNotNull(edit.label, edit.count.takeIf { it > 1 }?.let { "$it versões" }).joinToString(" · ")
+                else listOfNotNull(
+                    "Criar imagem", o?.let { if (it.model != null) "Especialista" else com.noc.app.chat.ImageOptions.engineLabel(it.engine).substringAfter(' ') },
+                    o?.count?.takeIf { it > 1 }?.let { "$it imagens" }, "melhorada".takeIf { o?.enhance == true }, "RAW".takeIf { o?.raw == true },
+                    o?.loras?.size?.takeIf { it > 0 }?.let { if (it == 1) "1 LoRA" else "$it LoRAs" },
+                    "com guia".takeIf { o?.reference != null || o?.control != null },
+                ).joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall, color = c.text3,
             )
+        }
+        // edição: miniatura da imagem de origem, para saber de onde veio
+        edit?.source?.thumb?.let { t ->
+            val bmp by produceState<android.graphics.Bitmap?>(null, t) { value = withContext(Dispatchers.IO) { decodeSampled(t, 240) } }
+            bmp?.let {
+                Image(it.asImageBitmap(), "Imagem de origem", contentScale = ContentScale.Crop,
+                    modifier = Modifier.padding(bottom = 6.dp).size(72.dp).clip(RoundedCornerShape(12.dp)))
+            }
         }
         Box(
             Modifier
@@ -237,7 +252,7 @@ fun ImageTile(img: GenImage, mod: Modifier, onClick: () -> Unit) {
 private fun Done(m: MessageEntity, job: ImageJob, actions: ImageActions) {
     val c = Noc.colors
     val images = job.images
-    Grid(images.size.coerceIn(1, 4).let { if (it == 3) 4 else it }, job.width ?: 1024, job.height ?: 1024) { i, mod ->
+    Grid(images.size.coerceIn(1, 4).let { if (it == 3) 4 else it }, (images.firstOrNull { it.width > 0 }?.width ?: job.width ?: 1024), (images.firstOrNull { it.width > 0 }?.height ?: job.height ?: 1024)) { i, mod ->
         val img = images.getOrNull(i)
         when {
             img == null -> Box(mod)
@@ -249,7 +264,7 @@ private fun Done(m: MessageEntity, job: ImageJob, actions: ImageActions) {
     Spacer(Modifier.height(8.dp))
     // metadados discretos: tamanho · modelo · tempo
     val meta = listOfNotNull(
-        job.width?.let { "$it × ${job.height}" }, job.modelName ?: m.modelName,
+        (images.firstOrNull { it.width > 0 }?.let { "${it.width} × ${it.height}" } ?: job.width?.let { "$it × ${job.height}" }), job.modelName ?: m.modelName,
         (job.wallMs ?: job.generateMs)?.let { "gerada em " + Texts.seconds(it) },
         "baixando…".takeIf { job.pending },
     ).joinToString(" · ")
@@ -286,7 +301,7 @@ private fun Failed(m: MessageEntity, job: ImageJob?, actions: ImageActions) {
 private fun Note(text: String, actionLabel: String, onAction: () -> Unit, images: List<GenImage>, job: ImageJob?, actions: ImageActions, error: Boolean = false) {
     val c = Noc.colors
     if (images.any { it.thumb != null || it.local != null } && job != null) {
-        Grid(images.size.coerceIn(1, 4).let { if (it == 3) 4 else it }, job.width ?: 1024, job.height ?: 1024) { i, mod ->
+        Grid(images.size.coerceIn(1, 4).let { if (it == 3) 4 else it }, (images.firstOrNull { it.width > 0 }?.width ?: job.width ?: 1024), (images.firstOrNull { it.width > 0 }?.height ?: job.height ?: 1024)) { i, mod ->
             images.getOrNull(i)?.let { if (it.thumb != null || it.local != null) ImageTile(it, mod) { actions.onOpen(i) } else Box(mod) } ?: Box(mod)
         }
         Spacer(Modifier.height(8.dp))

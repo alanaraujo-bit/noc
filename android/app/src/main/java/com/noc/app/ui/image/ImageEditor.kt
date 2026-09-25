@@ -116,7 +116,7 @@ fun ImageEditorScreen(container: AppContainer, nav: NavHostController, creationI
         if (mode == "expand") ExpandEditor(cr, bmp, prompt, { prompt = it }, busy, canEdit) { expand ->
             busy = true
             scope.launch {
-                val convId = container.chat.images.edit(cr, ImageEdit("outpaint", source = ImageInput.pc(cr.id, cr.width, cr.height), expand = expand), prompt, ImageOptions(),
+                val convId = container.chat.images.edit(cr, ImageEdit("outpaint", source = ImageInput.pc(cr.id, cr.width, cr.height, cr.thumbPath), expand = expand), prompt, ImageOptions(),
                     newConversation = { container.chat.newConversation() })
                 nav.navigate(Routes.chat(convId)) { popUpTo(Routes.IMAGE_EDIT) { inclusive = true } }
             }
@@ -124,7 +124,7 @@ fun ImageEditorScreen(container: AppContainer, nav: NavHostController, creationI
             busy = true
             scope.launch {
                 val mask = container.chat.images.inputFromPng(maskBmp)
-                val convId = container.chat.images.edit(cr, ImageEdit("inpaint", source = ImageInput.pc(cr.id, cr.width, cr.height), mask = mask, strength = strength),
+                val convId = container.chat.images.edit(cr, ImageEdit("inpaint", source = ImageInput.pc(cr.id, cr.width, cr.height, cr.thumbPath), mask = mask, strength = strength),
                     prompt, ImageOptions(), newConversation = { container.chat.newConversation() })
                 nav.navigate(Routes.chat(convId)) { popUpTo(Routes.IMAGE_EDIT) { inclusive = true } }
             }
@@ -174,9 +174,9 @@ private fun PaintEditor(
                 Canvas(Modifier.fillMaxSize()) {
                     val all = strokes + if (current.isNotEmpty()) listOf(Stroke2(current, radiusPx, erase)) else emptyList()
                     // camada de máscara: traços que apagam cortam os anteriores
-                    drawContext.canvas.saveLayer(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height), androidx.compose.ui.graphics.Paint())
+                    drawContext.canvas.saveLayer(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height), androidx.compose.ui.graphics.Paint().apply { alpha = 0.55f })
                     for (s in all) {
-                        val color = if (s.erase) Color.Transparent else Color(0xFFFF4D6D).copy(alpha = 0.55f)
+                        val color = if (s.erase) Color.Transparent else Color(0xFFFF4D6D)
                         val blend = if (s.erase) androidx.compose.ui.graphics.BlendMode.Clear else androidx.compose.ui.graphics.BlendMode.SrcOver
                         if (s.points.size == 1) {
                             val p = s.points[0]
@@ -201,7 +201,7 @@ private fun PaintEditor(
                 ToolButton(Icons.AutoMirrored.Rounded.Undo, "Desfazer", false, enabled = strokes.isNotEmpty()) { strokes.removeAt(strokes.lastIndex) }
                 ToolButton(Icons.Rounded.Delete, "Limpar", false, enabled = strokes.isNotEmpty()) { strokes.clear() }
                 Spacer(Modifier.width(4.dp))
-                Slider(value = brush, onValueChange = { brush = it }, valueRange = 0.015f..0.15f, modifier = Modifier.weight(1f),
+                Slider(value = brush, onValueChange = { brush = it }, valueRange = 0.015f..0.15f, modifier = Modifier.weight(1f).semantics { contentDescription = "Tamanho do pincel" },
                     colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent))
             }
             PromptBox(prompt, "O que colocar na área pintada (ex.: um gorro vermelho)", onPrompt)

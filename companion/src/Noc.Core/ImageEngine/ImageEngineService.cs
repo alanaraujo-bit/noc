@@ -74,6 +74,8 @@ public sealed record ImageRequest
     public string? FinalNegative { get; init; }
     /// <summary>Imagem da qual esta nasceu (variação, edição, recriação).</summary>
     public string? Parent { get; init; }
+    /// <summary>O que a imagem de origem mostra (o prompt dela): dá contexto a "um gorro vermelho" pintado num gato.</summary>
+    public string? Context { get; init; }
 
     public bool IsEdit => Op is not "txt2img";
     /// <summary>Só ampliação (sem refino): não precisa de nenhum modelo de difusão.</summary>
@@ -90,7 +92,7 @@ public sealed record ImageRequest
         ["referenceScale"] = ReferenceScale, ["detail"] = Detail is null ? null : new JsonArray(Detail.Select(x => (JsonNode)x).ToArray()),
         ["upscale"] = Upscale, ["hd"] = Hd,
         ["loras"] = new JsonArray(Loras.Select(l => (JsonNode)new JsonObject { ["id"] = l.Id, ["weight"] = l.Weight }).ToArray()),
-        ["finalPrompt"] = FinalPrompt, ["finalNegative"] = FinalNegative, ["parent"] = Parent,
+        ["finalPrompt"] = FinalPrompt, ["finalNegative"] = FinalNegative, ["parent"] = Parent, ["context"] = Context,
     };
 
     private static T? V<T>(JsonObject o, string k) => o[k] is JsonValue v && v.TryGetValue<T>(out var r) ? r : default;
@@ -111,6 +113,7 @@ public sealed record ImageRequest
         Detail = (o["detail"] as JsonArray)?.Select(x => x!.GetValue<string>()).ToArray(), Upscale = V<int>(o, "upscale"), Hd = V<bool>(o, "hd"),
         Loras = (o["loras"] as JsonArray)?.OfType<JsonObject>().Select(l => new LoraUse(l["id"]!.GetValue<string>(), l["weight"]?.GetValue<double>() ?? 0.8)).ToList() ?? [],
         FinalPrompt = V<string>(o, "finalPrompt"), FinalNegative = V<string>(o, "finalNegative"), Parent = V<string>(o, "parent"),
+        Context = V<string>(o, "context"),
     };
 }
 
@@ -370,6 +373,13 @@ public sealed class ImageEngineService : IAsyncDisposable
             var loras = ResolveLoras(req, def);
             var prompt = req.Prompt.Trim();
             string? rewriteMode = req.FinalPrompt is not null || req.PlainUpscale ? null : PromptCompiler.RewriteMode(def, prompt, req.Enhance, req.Raw);
+            // edição com pincel/expansão: o pedido é o que muda; a cena vem da imagem de origem
+            var rewriteInput = prompt;
+            if (!req.Raw && req.FinalPrompt is null && req.Context is { Length: > 0 } ctxt && req.Op is "inpaint" or "outpaint" && !string.Equals(ctxt.Trim(), prompt, StringComparison.OrdinalIgnoreCase))
+            {
+                if (def.Preset.Strategy == "natural") { rewriteMode = "edit"; rewriteInput = $"SCENE: {ctxt}\nCHANGE: {prompt}"; }
+                else { rewriteMode ??= def.Preset.Strategy; rewriteInput = $"{prompt}, {ctxt}"; }
+            }
             string? body = null;
             string? rewriteNote = null;
 
@@ -395,7 +405,7 @@ public sealed class ImageEngineService : IAsyncDisposable
 
                     // FLUX/SDXL: reescreve antes de carregar (o Qwen do Z-Image sobe sozinho; no SDXL pode ficar residente)
                     if (rewriteMode is not null && body is null && def.Engine != "zimage")
-                        (body, rewriteNote) = await RewriteAsync(prompt, rewriteMode, phase, ct, keepRewriter && def.Engine == "sdxl");
+                        (body, rewriteNote) = await RewriteAsync(rewriteInput, rewriteMode, phase, ct, keepRewriter && def.Engine == "sdxl");
 
                     // 4. carrega o modelo (ampliação simples não precisa de nenhum)
                     if (!req.PlainUpscale)
@@ -407,7 +417,7 @@ public sealed class ImageEngineService : IAsyncDisposable
 
                     // Z-Image: reescreve com o Qwen que já está carregado como codificador de texto
                     if (rewriteMode is not null && body is null && def.Engine == "zimage")
-                        (body, rewriteNote) = await RewriteAsync(prompt, rewriteMode, phase, ct, false);
+                        (body, rewriteNote) = await RewriteAsync(rewriteInput, rewriteMode, phase, ct, false);
 
                     var compiled = req.FinalPrompt is not null
                         ? new CompiledPrompt(prompt, req.FinalPrompt, req.FinalNegative ?? "", "recreate", null, null, [])
@@ -855,6 +865,7 @@ public sealed class ImageEngineService : IAsyncDisposable
             {
                 "enhance" => "Rewrite the user's image request as a detailed English prompt for an image generator (composition, lighting, camera, materials). Keep every requested element; add no people or personal traits that were not requested; keep quoted text as written. Output only the prompt.",
                 "tags" => "Convert the user's image request into comma-separated English Danbooru-style tags (lowercase, spaces instead of underscores): subject count tags only if people are requested, then appearance, clothing, pose, setting, lighting and style. Invent nothing that was not requested. No quality or rating tags. Output only the tags.",
+                "edit" => "The user is editing part of an existing image. You get the SCENE (what the image shows) and the CHANGE (what the painted area must become). Write one English prompt describing the whole image after the change: the scene's main subject and setting plus the change applied to it, e.g. an orange cat sleeping on a window sill wearing a red wool hat. Invent nothing else. Output only the prompt.",
                 "pony" => "Turn the user's image request into one line: a short English sentence describing the scene, a comma, then comma-separated lowercase Danbooru-style tags for the key details. Invent nothing that was not requested. No score, rating or quality tags. Output only that line.",
                 _ => "Translate the user's image request into an English prompt for an image generator. Keep every detail; remove phrases like 'create an image of'; keep quoted text as written. Output only the prompt.",
             };
@@ -1055,7 +1066,10 @@ public sealed class ImageEngineService : IAsyncDisposable
             {
                 ["wallMs"] = wall.ElapsedMilliseconds, ["loadMs"] = loadMs, ["generateMs"] = stats["totalMs"]?.DeepClone(),
                 ["meanStepMs"] = stats["meanStepMs"]?.DeepClone(), ["peakVramMb"] = stats["peakReservedMb"]?.DeepClone(),
-                ["width"] = req.Width, ["height"] = req.Height, ["steps"] = req.Steps, ["guidance"] = req.Guidance, ["seed"] = req.Seed,
+                // edições: o tamanho do resultado (expandir e ampliar mudam o tamanho)
+                ["width"] = images.Count > 0 && images[0]?["width"]?.GetValue<int>() is int iw and > 0 ? iw : req.Width,
+                ["height"] = images.Count > 0 && images[0]?["height"]?.GetValue<int>() is int ih and > 0 ? ih : req.Height,
+                ["steps"] = req.Steps, ["guidance"] = req.Guidance, ["seed"] = req.Seed,
                 ["count"] = req.Count, ["transformer"] = LoadedTransformer, ["textEncoder"] = LoadedTextEncoder, ["sampler"] = def.Engine == "sdxl" ? sampler : null,
                 ["schedule"] = def.Engine == "sdxl" ? schedule : null,
                 ["queuedMs"] = (long)((job.StartedAt ?? DateTimeOffset.Now) - job.CreatedAt).TotalMilliseconds,

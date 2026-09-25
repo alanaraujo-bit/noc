@@ -232,7 +232,16 @@ REWRITE_PONY = (
     "Example: garota de cabelo prateado lendo um livro numa biblioteca -> A girl with silver hair reading a book in a library, "
     "1girl, solo, silver hair, reading, book, library, bookshelf, indoors"
 )
-REWRITE_MODES = {"translate": REWRITE_TRANSLATE, "enhance": REWRITE_ENHANCE, "tags": REWRITE_TAGS, "pony": REWRITE_PONY}
+REWRITE_EDIT = (
+    "The user is editing part of an existing image. You receive the SCENE (what the image shows now, possibly in Portuguese) "
+    "and the CHANGE (what the painted area must become). Write ONE English prompt describing the whole image after the change: "
+    "the scene's main subject and setting, with the change applied to them. Keep the scene's subject exactly (do not replace it "
+    "with a person or another subject) and add nothing else.\n"
+    "Example: SCENE: gato laranja dormindo na janela / CHANGE: um gorro de lã vermelho -> an orange cat sleeping on a window sill, "
+    "wearing a red wool hat\n"
+    "Output only the prompt, one line."
+)
+REWRITE_MODES = {"edit": REWRITE_EDIT, "translate": REWRITE_TRANSLATE, "enhance": REWRITE_ENHANCE, "tags": REWRITE_TAGS, "pony": REWRITE_PONY}
 
 
 class Rewriter:
