@@ -16,11 +16,12 @@ public class EndToEndTests(ITestOutputHelper log)
 {
     private static bool Enabled => Environment.GetEnvironmentVariable("NOC_E2E") == "1";
 
-    internal static async Task<CompanionHost> StartHostAsync(bool remote, string? root = null, bool voice = false)
+    internal static async Task<CompanionHost> StartHostAsync(bool remote, string? root = null, bool voice = false, bool image = false)
     {
         AppPaths.Root = root ?? Path.Combine(Path.GetTempPath(), "noc-e2e-" + Guid.NewGuid().ToString("N")[..8]);
         var host = new CompanionHost();
         host.Settings.VoiceEnabled = voice;
+        host.Settings.ImageEnabled = image;
         host.Settings.AutoImportModels = false;
         host.Settings.KeepLmServerAlive = false;
         host.Catalog.Data.Preload = false;

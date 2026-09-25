@@ -77,7 +77,7 @@ public static class ImageCatalog
         {
             Steps = [6, 9, 12], Guidance = 0, GuidanceAdjustable = false, GuidanceMin = 0, GuidanceMax = 0,
             StepsMin = 4, StepsMax = 16, Transformer = "bf16", TextEncoder = "fp8", TransformerGiB = 11.4,
-            ResidentGiB = 20.6, PeakExtraGiB = 1.4, NativePortuguese = false, MaxPixels = 2048L * 2048,
+            ResidentGiB = 16.6, PeakExtraGiB = 3.7, NativePortuguese = false, MaxPixels = 1536L * 1536,
         },
     };
 

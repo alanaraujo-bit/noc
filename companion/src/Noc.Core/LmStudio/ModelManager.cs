@@ -167,7 +167,7 @@ public sealed class ModelManager
             try
             {
                 // o motor de imagem solta a GPU antes (um dono por vez; nada de medir VRAM com ele ocupando)
-                if (BeforeLoad is { } before) await before(ct);
+                if (BeforeLoad is { } releaseGpu) await releaseGpu(ct);
                 // Mesmo modelo com outro contexto, ou política de um modelo por vez: descarrega antes de medir a VRAM.
                 foreach (var other in probe.Models.Where(m => m.Loaded && m.Type == "llm" && (_settings.SingleModel || m.Key == key)))
                     foreach (var inst in other.Instances)

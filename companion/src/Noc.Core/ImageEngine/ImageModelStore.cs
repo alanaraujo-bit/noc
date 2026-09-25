@@ -44,6 +44,8 @@ public sealed class FileRecord
 public sealed class StoreState
 {
     public Dictionary<string, InstalledModel> Models { get; set; } = new();
+    /// <summary>Modelos que o Companion já instalou sozinho uma vez (se o usuário remover, não volta sozinho).</summary>
+    public List<string> AutoInstalled { get; set; } = [];
 }
 
 /// <summary>
@@ -67,6 +69,8 @@ public sealed class ImageModelStore : IDisposable
     public event Action? Changed;
     /// <summary>Linha para o registro de atividade do PC.</summary>
     public event Action<string, string>? Activity;
+    /// <summary>Um modelo terminou de instalar e foi conferido.</summary>
+    public event Action<ImageModelDef>? Installed;
     /// <summary>Rastro técnico para o diagnóstico.</summary>
     public event Action<string>? Trace;
 
@@ -145,6 +149,26 @@ public sealed class ImageModelStore : IDisposable
     }
 
     public double? LoadSeconds(ImageModelDef m) => Rec(m).LoadSeconds;
+    public DateTimeOffset? CheckedAt(ImageModelDef m) => Rec(m).CheckedAt;
+
+    /// <summary>Revisão nova disponível (só aviso; a atualização é decisão do usuário).</summary>
+    public string? LatestRevision(ImageModelDef m)
+    {
+        var r = Rec(m);
+        return IsInstalled(m) && r.LatestRevision is { } l && l != r.Revision ? l : null;
+    }
+
+    /// <summary>Marca a instalação automática (uma vez só por modelo). Devolve false se já tinha sido feita.</summary>
+    public bool MarkAutoInstall(ImageModelDef m)
+    {
+        lock (_lock)
+        {
+            if (_state.AutoInstalled.Contains(m.Id)) return false;
+            _state.AutoInstalled.Add(m.Id);
+        }
+        SaveState();
+        return true;
+    }
 
     public void SetLoadSeconds(ImageModelDef m, double seconds)
     {
@@ -420,6 +444,7 @@ public sealed class ImageModelStore : IDisposable
                 Activity?.Invoke($"{m.Name} instalado e conferido ({Gb(p.Total)} em {sw.Elapsed.TotalMinutes:0.0} min)", "model");
                 Trace?.Invoke($"{m.Id} instalado em {sw.Elapsed.TotalSeconds:0} s");
                 Changed?.Invoke();
+                Installed?.Invoke(m);
                 return;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

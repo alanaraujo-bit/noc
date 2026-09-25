@@ -148,7 +148,8 @@ def _fp8_targets(model_cls, config):
     with init_empty_weights():
         meta = model_cls.from_config(config)
     meta.enable_layerwise_casting(storage_dtype=FP8, compute_dtype=BF16)
-    return {n: p.dtype for n, p in meta.named_parameters()}
+    # o modelo "meta" nasce em float32: o que não vira fp8 fica em bf16 (dtype de cálculo)
+    return {n: (FP8 if p.dtype == FP8 else BF16) for n, p in meta.named_parameters()}
 
 
 def build_cache(model_cls, src_dir, dst_dir, mode, progress):
@@ -210,7 +211,7 @@ _DT = {"BF16": torch.bfloat16, "F16": torch.float16, "F32": torch.float32, "F8_E
        "I64": torch.int64, "I32": torch.int32, "U8": torch.uint8, "BOOL": torch.bool}
 
 
-def fast_load(path, device="cuda", chunk=64 * 1024 * 1024):
+def fast_load(path, device="cuda", chunk=64 * 1024 * 1024, own=False):
     """
     Lê um .safetensors direto para a GPU com leituras sequenciais grandes (buffer fixado, cópia assíncrona).
     O mmap do safetensors no Windows fica em ~0,9 GB/s; assim o limite passa a ser o disco.
@@ -250,9 +251,11 @@ def fast_load(path, device="cuda", chunk=64 * 1024 * 1024):
         dt = _DT[v["dtype"]]
         esize = torch.empty(0, dtype=dt).element_size()
         raw = blob[a:b]
-        if a % esize:
-            raw = raw.clone()  # alinhamento: cópia só neste caso raro
-        out[name] = raw.view(dt).reshape(v["shape"])
+        t = raw.clone() if (a % esize) else raw  # alinhamento: cópia só neste caso raro
+        t = t.view(dt).reshape(v["shape"])
+        # own: cada tensor com memória própria (os ganchos de fp8 trocam os pesos; uma vista manteria o bloco inteiro vivo)
+        out[name] = t.clone() if own else t
+    del blob
     return out
 
 
@@ -282,11 +285,11 @@ def save_state(state, dst_dir, extra_meta):
     os.replace(tmp_dir, dst_dir)
 
 
-def load_dir_to_cuda(cache_dir):
+def load_dir_to_cuda(cache_dir, own=False):
     state = {}
     for f in sorted(os.listdir(cache_dir)):
         if f.endswith(".safetensors"):
-            state.update(fast_load(os.path.join(cache_dir, f)))
+            state.update(fast_load(os.path.join(cache_dir, f), own=own))
     return state
 
 
@@ -295,7 +298,7 @@ def load_cached_model(model_cls, cache_dir, mode):
     config = model_cls.load_config(cache_dir)
     with init_empty_weights():
         model = model_cls.from_config(config)
-    state = load_dir_to_cuda(cache_dir)
+    state = load_dir_to_cuda(cache_dir, own=mode == "fp8")
     model.load_state_dict(state, strict=True, assign=True)
     del state
     model.to("cuda")  # buffers não persistentes nasceram na CPU
@@ -342,7 +345,7 @@ def load_qwen_te_fp8(te_dir, cache):
     with init_empty_weights():
         te = Qwen3Model(cfg)
     apply_layerwise_casting(te, storage_dtype=FP8, compute_dtype=BF16, skip_modules_pattern=("norm", "embed", "shared"))
-    te.load_state_dict(load_dir_to_cuda(cdir), strict=True, assign=True)
+    te.load_state_dict(load_dir_to_cuda(cdir, own=True), strict=True, assign=True)
     te.to("cuda")  # buffers não persistentes (ex.: frequências do RoPE) nasceram na CPU
     te.eval()
     te.requires_grad_(False)
@@ -645,8 +648,17 @@ def cmd_load(c):
          mem=gpu_mem(), peakAllocatedMb=torch.cuda.max_memory_allocated() // (1024 * 1024), **rss_mb())
 
 
+def _fault_oom():
+    """Só para testes automatizados: se o arquivo indicado em NOC_IMAGE_FAULT_OOM existir, consome-o e simula falta de VRAM."""
+    f = os.environ.get("NOC_IMAGE_FAULT_OOM")
+    if f and os.path.isfile(f):
+        os.remove(f)
+        raise torch.OutOfMemoryError("CUDA out of memory (simulado)")
+
+
 def cmd_generate(c):
     job = c["id"]
+    _fault_oom()
     eng = State.engine
     if eng is None or eng.pipe is None:
         raise WorkerError("not_loaded", "motor não carregado")

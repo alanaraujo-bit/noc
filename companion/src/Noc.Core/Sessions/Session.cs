@@ -508,6 +508,108 @@ public sealed class Session : IAsyncDisposable
                 return new JsonObject { ["ok"] = job is not null, ["finished"] = job?.IsFinished };
             }
 
+            case "image.status":
+                return ImageCapabilities();
+
+            case "image.prepare":
+                _host.Images.Prepare(p["engine"]?.GetValue<string>() ?? "fast");
+                return new JsonObject { ["ok"] = true };
+
+            case "image.start":
+            {
+                if (!_host.Images.Enabled) throw new RpcException("image_off", "A geração de imagens está desligada no PC.");
+                var jobId = Str(p, "job");
+                if (jobId.Length is < 8 or > 64 || !ImageEngine.ImageOutputs.ValidId(jobId + "-0")) throw new RpcException("bad_request", "job inválido");
+                var existingJob = _host.Jobs.Get(jobId);
+                if (existingJob is not null)
+                {
+                    SubscribeJob(existingJob, p["from"]?.GetValue<int>() ?? 0);
+                    return new JsonObject { ["job"] = existingJob.Id, ["existing"] = true, ["model"] = existingJob.Model[6..] };
+                }
+                var req = BuildImageRequest(p);
+                var label = p["label"]?.GetValue<string>() is { } l ? (l.Length > 80 ? l[..80] : l) : null;
+                var meta = p["meta"] as JsonObject;
+                if (meta is not null && meta.ToJsonString().Length > 512) meta = null;
+                var (job, existing) = _host.Jobs.StartImage(jobId, DeviceId!, req, (JsonObject?)meta?.DeepClone(), label);
+                SubscribeJob(job, p["from"]?.GetValue<int>() ?? 0);
+                return new JsonObject
+                {
+                    ["job"] = job.Id, ["existing"] = existing, ["model"] = req.Model, ["name"] = ImageEngine.ImageCatalog.Find(req.Model)?.Name,
+                    ["position"] = _host.Jobs.QueuePosition(job), ["width"] = req.Width, ["height"] = req.Height, ["steps"] = req.Steps,
+                    ["seed"] = req.Seed, ["count"] = req.Count, ["note"] = req.AutoNote,
+                };
+            }
+
+            case "image.get":
+            {
+                var id = Str(p, "id");
+                var kind = p["kind"]?.GetValue<string>() == "thumb" ? "thumb" : "full";
+                var offset = p["offset"]?.GetValue<long>() ?? 0;
+                var length = Math.Clamp(p["length"]?.GetValue<int>() ?? 262_144, 1024, 1_048_576);
+                try
+                {
+                    var r = _host.Images.Outputs.Read(id, kind, offset, length) ?? throw new RpcException("image_unknown", "Esta imagem não está mais no PC.");
+                    return new JsonObject { ["id"] = id, ["kind"] = kind, ["offset"] = offset, ["total"] = r.Total, ["data"] = Convert.ToBase64String(r.Data) };
+                }
+                catch (ArgumentOutOfRangeException) { throw new RpcException("bad_request", "posição inválida"); }
+            }
+
+            case "image.meta":
+            {
+                var meta = _host.Images.Outputs.ReadMeta(Str(p, "id")) ?? throw new RpcException("image_unknown", "Esta imagem não está mais no PC.");
+                // só quem pediu vê o prompt
+                if (meta["device"]?.GetValue<string>() != DeviceId) throw new RpcException("forbidden", "Imagem de outro aparelho.");
+                return meta;
+            }
+
+            case "image.delete":
+            {
+                var id = Str(p, "id");
+                var meta = _host.Images.Outputs.ReadMeta(id);
+                if (meta is not null && meta["device"]?.GetValue<string>() != DeviceId) throw new RpcException("forbidden", "Imagem de outro aparelho.");
+                return new JsonObject { ["ok"] = _host.Images.Outputs.Delete(id) };
+            }
+
+            case "image.models":
+                return _host.Images.ToJson();
+
+            case "image.install":
+            {
+                var m = ImageEngine.ImageCatalog.Find(Str(p, "model")) ?? throw new RpcException("model_not_found", "Modelo de imagem desconhecido");
+                _host.Images.Store.StartInstall(m);
+                _host.Security.Write(SecurityLevel.Info, "image.install", $"{DeviceName} pediu para instalar {m.Name}", DeviceId, Route);
+                return _host.Images.ToJson();
+            }
+
+            case "image.update":
+            {
+                var m = ImageEngine.ImageCatalog.Find(Str(p, "model")) ?? throw new RpcException("model_not_found", "Modelo de imagem desconhecido");
+                var latest = _host.Images.Store.LatestRevision(m) ?? throw new RpcException("no_update", "Não há atualização para este modelo.");
+                _host.Images.Store.StartInstall(m, latest);
+                return _host.Images.ToJson();
+            }
+
+            case "image.pause":
+            {
+                var m = ImageEngine.ImageCatalog.Find(Str(p, "model")) ?? throw new RpcException("model_not_found", "Modelo de imagem desconhecido");
+                _host.Images.Store.Pause(m);
+                return _host.Images.ToJson();
+            }
+
+            case "image.verify":
+            {
+                var m = ImageEngine.ImageCatalog.Find(Str(p, "model")) ?? throw new RpcException("model_not_found", "Modelo de imagem desconhecido");
+                _ = Task.Run(() => _host.Images.Store.VerifyInstalledAsync(m, CancellationToken.None));
+                return _host.Images.ToJson();
+            }
+
+            case "image.token":
+            {
+                var (ok, message) = await _host.SetHfTokenAsync(p["token"]?.GetValue<string>());
+                if (!ok) throw new RpcException("bad_token", message);
+                return new JsonObject { ["ok"] = true, ["message"] = message, ["status"] = _host.Images.ToJson() };
+            }
+
             case "devices.list":
                 return new JsonObject { ["devices"] = _host.DevicesJson(DeviceId) };
 
@@ -541,6 +643,77 @@ public sealed class Session : IAsyncDisposable
             default:
                 throw new RpcException("unknown_method", method);
         }
+    }
+
+    /// <summary>O que o celular pode oferecer na criação de imagem (só o que funciona de verdade nesta máquina).</summary>
+    private JsonObject ImageCapabilities()
+    {
+        var o = _host.Images.ToJson();
+        o["formats"] = new JsonArray(ImageEngine.ImageFormats.All.Select(f => (JsonNode)new JsonObject
+        {
+            ["id"] = f.Id, ["label"] = f.Label, ["width"] = f.Width, ["height"] = f.Height,
+        }).ToArray());
+        o["qualities"] = new JsonArray(
+            new JsonObject { ["id"] = "fast", ["label"] = "Rápida" },
+            new JsonObject { ["id"] = "standard", ["label"] = "Padrão" },
+            new JsonObject { ["id"] = "high", ["label"] = "Alta" });
+        o["counts"] = new JsonArray(1, 2, 4);
+        var engines = new JsonArray();
+        foreach (var m in ImageEngine.ImageCatalog.All)
+        {
+            var d = m.Defaults;
+            engines.Add(new JsonObject
+            {
+                ["choice"] = m.Profile, ["model"] = m.Id, ["name"] = m.Name, ["label"] = m.Profile == "fast" ? "Rápido" : "Qualidade",
+                ["installed"] = _host.Images.Store.IsInstalled(m),
+                ["steps"] = new JsonObject { ["min"] = d.StepsMin, ["max"] = d.StepsMax, ["presets"] = new JsonArray(d.Steps.Select(x => (JsonNode)x).ToArray()) },
+                ["guidance"] = d.GuidanceAdjustable ? new JsonObject { ["min"] = d.GuidanceMin, ["max"] = d.GuidanceMax, ["default"] = d.Guidance } : null,
+                ["maxPixels"] = d.MaxPixels,
+            });
+        }
+        o["engines"] = engines;
+        return o;
+    }
+
+    /// <summary>Valida e completa o pedido de imagem (formato, qualidade → passos, seed, motor automático).</summary>
+    private ImageEngine.ImageRequest BuildImageRequest(JsonObject p)
+    {
+        var prompt = Str(p, "prompt").Trim();
+        if (prompt.Length > 4000) throw new RpcException("bad_request", "Descrição longa demais (máx. 4000 caracteres).");
+        var choice = p["engine"]?.GetValue<string>() is "quality" or "auto" ? p["engine"]!.GetValue<string>() : "fast";
+        var quality = p["quality"]?.GetValue<string>() is "fast" or "high" ? p["quality"]!.GetValue<string>() : "standard";
+        var count = p["count"]?.GetValue<int>() is 2 or 4 ? p["count"]!.GetValue<int>() : 1;
+        var formatId = p["format"]?.GetValue<string>() ?? "square";
+        int w, h;
+        if (ImageEngine.ImageFormats.Find(formatId) is { } f) (w, h) = (f.Width, f.Height);
+        else
+        {
+            formatId = "custom";
+            w = p["width"]?.GetValue<int>() ?? 1024;
+            h = p["height"]?.GetValue<int>() ?? 1024;
+        }
+        var (def, note, error) = _host.Images.Choose(choice, quality, prompt, (long)w * h);
+        if (def is null)
+        {
+            var (code, msg) = error switch
+            {
+                { } e when e.StartsWith("flux_unavailable") => ("model_not_installed", "O FLUX.1 Dev ainda não foi liberado neste PC (precisa da sua conta do Hugging Face)."),
+                { } e when e.StartsWith("model_not_installed") => ("model_not_installed", $"O {ImageEngine.ImageCatalog.Find(e.Split(':')[1])?.Name ?? "modelo"} ainda não está instalado no PC."),
+                "too_large" => ("bad_request", "Esse tamanho é grande demais para o modelo de qualidade."),
+                _ => ("model_not_installed", "Nenhum modelo de imagem instalado no PC."),
+            };
+            throw new RpcException(code, msg);
+        }
+        var d = def.Defaults;
+        (w, h) = ImageEngine.ImageFormats.Snap(w, h, d.MaxPixels);
+        var steps = p["steps"]?.GetValue<int>() is int st ? Math.Clamp(st, d.StepsMin, d.StepsMax) : d.Steps[quality switch { "fast" => 0, "high" => 2, _ => 1 }];
+        var guidance = d.GuidanceAdjustable && p["guidance"]?.GetValue<double>() is double g ? Math.Clamp(g, d.GuidanceMin, d.GuidanceMax) : d.Guidance;
+        long seed = p["seed"]?.GetValue<long>() is long sd and >= 0 and < int.MaxValue - 8 ? sd : System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, int.MaxValue - 8);
+        return new ImageEngine.ImageRequest
+        {
+            Prompt = prompt, Choice = choice, Model = def.Id, Width = w, Height = h, Format = formatId, Quality = quality, Steps = steps,
+            Guidance = guidance, Count = count, Seed = seed, Enhance = p["enhance"]?.GetValue<bool>() ?? false, AutoNote = choice == "auto" ? note : null,
+        };
     }
 
     private string ResolveModel(string modelOrTier)

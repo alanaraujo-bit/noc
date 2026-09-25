@@ -176,6 +176,12 @@ public sealed class WorkerProcess : IDisposable
         catch (Exception) { Kill(); }
     }
 
+    /// <summary>Prioridade baixa (tarefas de manutenção, como otimizar um modelo, não atrapalham o PC).</summary>
+    public void LowerPriority()
+    {
+        try { _p.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
+    }
+
     public void Kill()
     {
         try { if (!_p.HasExited) _p.Kill(entireProcessTree: true); } catch (Exception) { }

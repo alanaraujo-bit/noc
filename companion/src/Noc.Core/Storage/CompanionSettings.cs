@@ -40,6 +40,8 @@ public sealed class CompanionSettings
     public int ImageKeepWarmMinutes { get; set; } = 10;
     /// <summary>Com um modelo de conversa esperando para voltar, o motor de imagem libera a GPU mais cedo.</summary>
     public int ImageKeepWarmWithLlmSeconds { get; set; } = 90;
+    /// <summary>VRAM (GiB) que o motor de imagem deixa para outros programas (ex.: um jogo aberto). 0 = usa o que estiver livre.</summary>
+    public double ImageVramReserveGiB { get; set; }
 
     private static readonly JsonSerializerOptions Json = new()
     {

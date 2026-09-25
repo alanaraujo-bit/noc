@@ -19,6 +19,7 @@ public interface ISessionHost
     BlobStore Blobs { get; }
     Speech.SttService Stt { get; }
     ImageEngine.ImageEngineService Images { get; }
+    Task<(bool Ok, string Message)> SetHfTokenAsync(string? token);
     Storage.CompanionSettings Settings { get; }
     JsonArray LibraryJson();
     Diagnostics.DiagLog Diag { get; }

@@ -203,6 +203,9 @@ public sealed class ImageEngineService : IAsyncDisposable
                 finally { Runtime.Changed -= OnRt; }
             }
 
+            // 1b. cópias de carga rápida (uma vez por modelo, num processo à parte)
+            if (!IsOptimized(def, false)) await OptimizeAsync(def, false, phase, ct);
+
             // 2. prompt: tradução (os modelos entendem melhor inglês) e melhoria opcional
             var prompt = req.Prompt.Trim();
             string? rewriteMode = req.Enhance ? "enhance" : !def.Defaults.NativePortuguese && !LooksEnglish(prompt) ? "translate" : null;
@@ -219,6 +222,11 @@ public sealed class ImageEngineService : IAsyncDisposable
                     {
                         lowVram = await MakeRoomAsync(def, lowVram, phase, ct);
                         mode = Mode(def, lowVram);
+                    }
+                    if (lowVram && !IsOptimized(def, true))
+                    {
+                        if (WorkerAlive) await ShutdownWorkerAsync("optimize");
+                        await OptimizeAsync(def, true, phase, ct);
                     }
                     await EnsureWorkerAsync(phase, ct);
 
@@ -303,7 +311,8 @@ public sealed class ImageEngineService : IAsyncDisposable
         }
         var (total, used) = await VramAsync(ct);
         if (total <= 0) return lowVram; // sem leitura da GPU: segue e deixa a recuperação de OOM agir
-        var free = total - used;
+        var reserve = Math.Max(0, _settings.ImageVramReserveGiB);
+        var free = total - used - reserve;
         var need = NeedGiB(def, lowVram);
         var loadedLlms = _models.Last.Models.Where(m => m.Loaded && m.Type == "llm").ToList();
         if (free < need && loadedLlms.Count > 0)
@@ -318,7 +327,7 @@ public sealed class ImageEngineService : IAsyncDisposable
             }
             await WaitVramSettleAsync(ct);
             (total, used) = await VramAsync(ct);
-            free = total - used;
+            free = total - used - reserve;
         }
         if (free >= need) return lowVram;
         if (!lowVram && free >= NeedGiB(def, true))
@@ -423,6 +432,110 @@ public sealed class ImageEngineService : IAsyncDisposable
             ["allocatedMb"] = r["mem"]?["allocatedMb"]?.DeepClone(), ["freeMb"] = r["mem"]?["freeMb"]?.DeepClone(), ["peakRssMb"] = r["peakRssMb"]?.DeepClone(),
         });
         Changed?.Invoke();
+    }
+
+    /// <summary>As cópias de carga rápida deste modelo (no modo normal ou econômico) já existem?</summary>
+    public bool IsOptimized(ImageModelDef def, bool lowVram)
+    {
+        var rev = Store.InstalledRevision(def);
+        if (rev is null) return false;
+        var c = ImagePaths.CacheDir(def, rev);
+        var t = lowVram ? "fp8" : def.Defaults.Transformer;
+        var ok = File.Exists(Path.Combine(c, $"transformer-{t}", "noc-cache.json"));
+        if (def.Engine == "zimage") ok &= File.Exists(Path.Combine(c, "text_encoder-fp8", "noc-cache.json"));
+        return ok;
+    }
+
+    /// <summary>Modelo sendo otimizado agora (para a tela) e o progresso (0..1).</summary>
+    public string? Optimizing { get; private set; }
+    public double? OptimizeProgress { get; private set; }
+
+    /// <summary>
+    /// Cria as cópias de carga rápida (transformer em bf16/fp8, codificador de texto em fp8) a partir dos pesos oficiais.
+    /// Roda num processo próprio, com prioridade baixa, e sai no fim: a conversão incha a memória do processo
+    /// e a primeira geração num processo assim fica lenta (medido).
+    /// </summary>
+    private async Task OptimizeAsync(ImageModelDef def, bool lowVram, Action<string, JsonObject?> phase, CancellationToken ct)
+    {
+        var dir = Store.InstalledDir(def)!;
+        var rev = Store.InstalledRevision(def)!;
+        Optimizing = def.Id;
+        OptimizeProgress = 0;
+        Changed?.Invoke();
+        phase("optimizing", new JsonObject { ["name"] = def.Name, ["progress"] = 0 });
+        Activity?.Invoke($"Otimizando o {def.Name} para a sua GPU (só na primeira vez)", "model");
+        var sw = Stopwatch.StartNew();
+        using var w = await WorkerProcess.StartAsync(ImageRuntime.PythonExe, ImageRuntime.WorkerScript, ct);
+        w.LowerPriority();
+        w.Event += e =>
+        {
+            if (e["ev"]?.GetValue<string>() != "optimize_progress") return;
+            // o transformer é quase todo o trabalho; o codificador de texto fecha os últimos 15%
+            var part = e["part"]?.GetValue<string>();
+            var pr = e["progress"]?.GetValue<double>() ?? 0;
+            OptimizeProgress = part == "text_encoder" ? 0.85 + pr * 0.15 : pr * (def.Engine == "zimage" ? 0.85 : 1);
+            phase("optimizing", new JsonObject { ["name"] = def.Name, ["progress"] = Math.Round(OptimizeProgress.Value, 3) });
+            Changed?.Invoke();
+        };
+        try
+        {
+            var r = await w.RequestAsync(new JsonObject
+            {
+                ["cmd"] = "optimize", ["engine"] = def.Engine, ["path"] = dir, ["cache"] = ImagePaths.CacheDir(def, rev),
+                ["transformer"] = lowVram ? "fp8" : def.Defaults.Transformer,
+            }, ct, TimeSpan.FromMinutes(60));
+            if (r["ev"]?.GetValue<string>() == "error") throw WorkerError(r);
+            Trace?.Invoke($"{def.Id} otimizado ({(lowVram ? "econômico" : "normal")}) em {sw.Elapsed.TotalSeconds:0} s");
+        }
+        finally
+        {
+            await w.ShutdownAsync(TimeSpan.FromSeconds(10));
+            Optimizing = null;
+            OptimizeProgress = null;
+            Changed?.Invoke();
+        }
+    }
+
+    /// <summary>Depois de instalar: prepara o ambiente e otimiza já, para a primeira imagem sair rápido.</summary>
+    public void AfterInstall(ImageModelDef def) => _ = Task.Run(async () =>
+    {
+        try
+        {
+            await Runtime.EnsureAsync(CancellationToken.None);
+            if (IsOptimized(def, false)) return;
+            await _gate.WaitAsync();
+            try
+            {
+                if (!IsOptimized(def, false)) await OptimizeAsync(def, false, (_, _) => { }, CancellationToken.None);
+            }
+            finally { _gate.Release(); }
+        }
+        catch (Exception e) { Trace?.Invoke($"preparação de {def.Id} depois da instalação falhou: {e.GetType().Name} {e.Message}"); }
+    });
+
+    /// <summary>
+    /// Primeira vez (e a cada partida): continua instalações interrompidas e instala sozinho o Z-Image Turbo,
+    /// o motor padrão. O FLUX.1 Dev só entra quando há conta do Hugging Face com os termos aceitos.
+    /// </summary>
+    public void AutoSetup()
+    {
+        if (!Enabled) return;
+        Store.ResumePending();
+        foreach (var m in ImageCatalog.All)
+        {
+            if (Store.IsInstalled(m)) { if (!IsOptimized(m, false)) AfterInstall(m); continue; }
+            if (m.Gated && HfToken.Load() is null) continue;
+            if (Store.Busy(m) || !Store.MarkAutoInstall(m)) continue;
+            Store.StartInstall(m);
+        }
+        _ = Task.Run(async () =>
+        {
+            try { await Runtime.EnsureAsync(CancellationToken.None); } catch (Exception) { }
+            // aviso de atualização (no máximo um por dia; nunca baixa sozinho)
+            foreach (var m in ImageCatalog.All.Where(Store.IsInstalled))
+                if (Store.CheckedAt(m) is not { } at || DateTimeOffset.Now - at > TimeSpan.FromDays(1))
+                    await Store.CheckUpdateAsync(m, CancellationToken.None);
+        });
     }
 
     private static WorkerException WorkerError(JsonObject r) =>

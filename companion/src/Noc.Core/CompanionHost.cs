@@ -39,9 +39,11 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
     public Benchmark Bench { get; }
     public GpuMonitor Gpu { get; } = new();
     public Diagnostics.DiagLog Diag { get; } = new();
+    public ImageEngine.ImageEngineService Images { get; }
+    private Timer? _imageDebounce;
 
     /// <summary>Recursos que este Companion oferece (o celular se adapta a Companions antigos).</summary>
-    public static readonly string[] Features = ["tiers", "blobs", "stt", "jobs2", "bench", "library"];
+    public static readonly string[] Features = ["tiers", "blobs", "stt", "jobs2", "bench", "library", "image"];
     public LanServer Lan { get; }
     public RelayClient Relay { get; }
 
@@ -75,6 +77,12 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
         Library = new ModelLibrary(() => Settings.ExtraModelFolders, () => Settings.AllowComponentDownloads);
         Jobs = new JobManager(Lm, Models, Blobs);
         Bench = new Benchmark(Lm, Models, Jobs, Gpu);
+        Images = new ImageEngine.ImageEngineService(Settings, Models, Lm, Gpu);
+        Jobs.Images = Images;
+        Images.HasPendingWork = () => Jobs.HasImageWork;
+        Images.AnyJobActive = () => Jobs.Active.Count > 0;
+        // um dono da GPU por vez: toda carga de LLM (conversa, pré-carga, teste, pedido do celular) solta o motor de imagem antes
+        Models.BeforeLoad = ct => Images.ReleaseForLlmAsync(ct);
         Lan = new LanServer(this);
         Relay = new RelayClient(this, () => Settings.RelayUrl);
 
@@ -130,6 +138,10 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
                 _ = s.TerminateAsync("revoked");
         };
         Devices.Changed += () => Changed?.Invoke();
+        Images.Changed += OnImageChanged;
+        Images.Activity += Activity;
+        Images.Trace += m => Diag.Write("imagem", m);
+        Images.Store.Installed += m => Images.AfterInstall(m);
         Pairing.OffersChanged += () => Changed?.Invoke();
     }
 
@@ -148,6 +160,9 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
         if (Settings.RemoteEnabled) Relay.Start();
         // Tarefas que estavam na fila ou gerando quando o PC/Companion desligou.
         Jobs.RecoverFromDisk();
+        // Motor de imagem: continua downloads interrompidos e instala o modelo padrão na primeira vez.
+        Images.AutoSetup();
+        _ = Task.Run(RefreshHfUserAsync);
         _pollTimer = new Timer(_ => _ = HealthTickAsync(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
         _ = Task.Run(async () =>
         {
@@ -223,6 +238,55 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
         }
         catch (Exception) { }
         finally { Interlocked.Exchange(ref _polling, 0); }
+    }
+
+    /// <summary>Confere a conta do Hugging Face (para mostrar "conectado como …" e liberar o FLUX).</summary>
+    public async Task RefreshHfUserAsync()
+    {
+        var token = ImageEngine.HfToken.Load();
+        if (token is null) { Images.HfUser = null; return; }
+        try { Images.HfUser = await Images.Store.WhoAmIAsync(token, _cts.Token) ?? ""; }
+        catch (Exception) { /* sem internet: fica como estava */ }
+        Changed?.Invoke();
+    }
+
+    /// <summary>Salva o token do Hugging Face (depois de conferir) e começa a instalar o FLUX.1 Dev se ainda não estiver.</summary>
+    public async Task<(bool Ok, string Message)> SetHfTokenAsync(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            ImageEngine.HfToken.Save(null);
+            Images.HfUser = null;
+            Changed?.Invoke();
+            return (true, "Conta do Hugging Face desconectada.");
+        }
+        token = token.Trim();
+        if (!token.StartsWith("hf_", StringComparison.Ordinal) || token.Length < 20) return (false, "Isto não parece um token do Hugging Face (começa com hf_).");
+        string? user;
+        try { user = await Images.Store.WhoAmIAsync(token, _cts.Token); }
+        catch (Exception) { return (false, "Sem conexão com o Hugging Face para conferir o token. Tente de novo."); }
+        if (user is null) return (false, "O Hugging Face recusou este token. Confira se ele foi copiado inteiro.");
+        ImageEngine.HfToken.Save(token);
+        Images.HfUser = user;
+        Security.Write(SecurityLevel.Info, "hf.token", $"Conta do Hugging Face conectada ({user})");
+        var flux = ImageEngine.ImageCatalog.FluxDev;
+        if (!Images.Store.IsInstalled(flux)) Images.Store.StartInstall(flux);
+        Changed?.Invoke();
+        return (true, $"Conectado como {user}.");
+    }
+
+    private void OnImageChanged()
+    {
+        Changed?.Invoke();
+        // progresso de download/otimização muda o tempo todo: no máximo um evento por segundo para os celulares
+        if (_imageDebounce is not null) return;
+        _imageDebounce = new Timer(_ =>
+        {
+            _imageDebounce?.Dispose();
+            _imageDebounce = null;
+            Broadcast("image", Images.ToJson());
+            OnStateChanged();
+        }, null, 1000, Timeout.Infinite);
     }
 
     // ---------------- estado ----------------
@@ -338,6 +402,12 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
             ["stt"] = Settings.VoiceEnabled ? Stt.ToJson() : new JsonObject { ["state"] = "off" },
             ["bench"] = Bench.Busy ? new JsonObject { ["model"] = Bench.RunningModel, ["step"] = Bench.Step, ["progress"] = Bench.Progress } : null,
             ["importing"] = Library.Busy,
+            ["image"] = new JsonObject
+            {
+                ["enabled"] = Images.Enabled, ["state"] = Images.State.ToString().ToLowerInvariant(), ["loaded"] = Images.Loaded?.Id,
+                ["name"] = Images.Loaded?.Name, ["optimizing"] = Images.Optimizing,
+                ["installed"] = new JsonArray(ImageEngine.ImageCatalog.All.Where(Images.Store.IsInstalled).Select(m => (JsonNode)m.Id).ToArray()),
+            },
             ["last"] = lastDone is null ? null : new JsonObject
             {
                 ["model"] = lastDone.Model, ["name"] = Models.DisplayName(lastDone.Model),
@@ -552,6 +622,7 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
         await Relay.DisposeAsync();
         await Lan.DisposeAsync();
         Jobs.Dispose();
+        await Images.DisposeAsync();
         Library.Dispose();
         Stt.Dispose();
         Blobs.Dispose();
