@@ -113,10 +113,14 @@ class Notifier(
         ensureChannels(context)
         val model = job?.modelName ?: msg.modelName ?: "Seu PC"
         val n = job?.images?.count { it.local != null } ?: 0
-        val excerpt = job?.prompt?.replace(Regex("\\s+"), " ")?.trim()?.let { if (it.length > 90) it.take(88) + "…" else it }
+        val excerpt = job?.prompt?.replace(Regex("\\s+"), " ")?.trim()?.takeIf { it.isNotEmpty() }?.let { if (it.length > 90) it.take(88) + "…" else it }
         val (title, text) = when (status) {
-            MessageStatus.DONE -> (if (n > 1) "Suas $n imagens estão prontas" else "Sua imagem está pronta") to
-                listOfNotNull("$model terminou a geração.", excerpt?.let { "“$it”" }).joinToString(" ")
+            MessageStatus.DONE -> (when (job?.edit?.op) {
+                "upscale" -> "Imagem ampliada"; "hd" -> "Alta definição pronta"; "detail" -> "Rostos e mãos refeitos"
+                "inpaint" -> "Edição pronta"; "outpaint" -> "Imagem expandida"; "recreate" -> "Imagem recriada"
+                "img2img" -> if (n > 1) "Suas $n variações estão prontas" else "Variação pronta"
+                else -> if (n > 1) "Suas $n imagens estão prontas" else "Sua imagem está pronta"
+            }) to listOfNotNull("$model terminou" + (if (job?.edit == null) " a geração." else "."), excerpt?.let { "“$it”" }).joinToString(" ")
             MessageStatus.INTERRUPTED -> "Imagem interrompida" to "Toque para tentar de novo."
             else -> "Não foi possível criar a imagem" to ((detail?.takeIf { it.isNotBlank() } ?: "A geração falhou no PC.") + " Toque para tentar de novo.")
         }

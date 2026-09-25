@@ -298,7 +298,8 @@ private fun DetailsSheet(c: CreationEntity, loadMeta: (suspend (String) -> kotli
                     if (!final.isNullOrBlank() && final != c.prompt) Field("Prompt usado pelo modelo" + (strategyLabel(m("strategy") ?: c.strategy)?.let { " · $it" } ?: ""), final)
                     (m("negative") ?: c.negative)?.takeIf { it.isNotBlank() }?.let { Field("Prompt negativo", it) }
                     val hash = m("modelSha256")?.let { "hash ${it.take(12)}" } ?: m("modelRevision")?.let { "revisão ${it.take(12)}" }
-                    Field("Modelo", listOfNotNull(c.modelName.ifBlank { c.model }, m("modelVersion"), hash).joinToString(" · "))
+                    val name = c.modelName.ifBlank { c.model }
+                    Field("Modelo", listOfNotNull(name, m("modelVersion")?.takeIf { !name.contains(it) }, hash).joinToString(" · "))
                     val loras = (meta?.get("loras") as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it as? kotlinx.serialization.json.JsonObject }
                         ?.joinToString("\n") { l -> "${(l["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content} · ${(l["weight"] as? kotlinx.serialization.json.JsonPrimitive)?.content}" }
                         ?.takeIf { it.isNotBlank() } ?: c.loras
@@ -306,7 +307,7 @@ private fun DetailsSheet(c: CreationEntity, loadMeta: (suspend (String) -> kotli
                     opLabel(m("op") ?: c.op)?.let { Field("Operação", it) }
                     Field("Tamanho", "${c.width} × ${c.height}")
                     c.seed?.let { Field("Seed", it.toString()) }
-                    (m("sampler") ?: c.sampler)?.let { smp -> Field("Sampler", smp + (m("schedule")?.let { " · $it" } ?: "")) }
+                    (m("sampler") ?: c.sampler)?.let { smp -> Field("Sampler", samplerName(smp) + (m("schedule")?.takeIf { it != "normal" }?.let { " · " + it.replaceFirstChar { ch -> ch.uppercase() } } ?: "")) }
                     c.steps?.let { Field("Passos", it.toString()) }
                     c.guidance?.takeIf { it > 0 }?.let { Field(if (m("engine") == "sdxl") "CFG" else "Guidance", "%.1f".format(it)) }
                     m("clipSkip")?.let { Field("Clip skip", it) }
@@ -318,6 +319,11 @@ private fun DetailsSheet(c: CreationEntity, loadMeta: (suspend (String) -> kotli
             Spacer(Modifier.height(20.dp))
         }
     }
+}
+
+private fun samplerName(id: String) = when (id) {
+    "euler" -> "Euler"; "euler_a" -> "Euler Ancestral"; "dpmpp_2m" -> "DPM++ 2M"; "dpmpp_2m_sde" -> "DPM++ 2M SDE"; "dpmpp_3m_sde" -> "DPM++ 3M SDE"
+    "dpmpp_sde" -> "DPM++ SDE"; "ddim" -> "DDIM"; "unipc" -> "UniPC"; "heun" -> "Heun"; "lms" -> "LMS"; "dpm2_a" -> "DPM2 Ancestral"; else -> id
 }
 
 private fun strategyLabel(s: String?) = when (s) {

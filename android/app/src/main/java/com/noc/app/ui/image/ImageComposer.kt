@@ -408,7 +408,7 @@ fun LoraPickerSheet(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            PrimaryButton(if (picks.isEmpty()) "Sem LoRAs" else "Usar ${picks.size} LoRA${if (picks.size > 1) "s" else ""}", Modifier.fillMaxWidth(), height = 48.dp) {
+            PrimaryButton(if (picks.isEmpty()) (if (options.loras.isEmpty()) "Concluído" else "Tirar os LoRAs") else "Usar ${picks.size} LoRA${if (picks.size > 1) "s" else ""}", Modifier.fillMaxWidth(), height = 48.dp) {
                 onChange(options.copy(loras = picks)); onDismiss()
             }
             Spacer(Modifier.height(14.dp))
