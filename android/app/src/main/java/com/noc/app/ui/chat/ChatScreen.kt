@@ -362,7 +362,8 @@ fun ChatScreen(
         topBar = {
             ChatTopBar(
                 title = conv?.title ?: "Nova conversa",
-                model = headerLabel,
+                model = if (imageMode) "✦ Criar imagem · " + (imageCaps?.engine(if (imageOptions.engine == "auto") "fast" else imageOptions.engine)?.name
+                    ?: com.noc.app.chat.ImageOptions.engineLabel(imageOptions.engine).substringAfter(' ')) else headerLabel,
                 pinned = conv?.pinned == true,
                 conn = conn,
                 otherTasks = otherTasks,
@@ -457,7 +458,13 @@ fun ChatScreen(
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (messages.isEmpty()) {
+            if (messages.isEmpty() && imageMode) {
+                EmptyImage(compact = voice !is com.noc.app.voice.VoiceState.Idle) { s ->
+                    draft = TextFieldValue(s, TextRange(s.length))
+                    focus.requestFocus()
+                    keyboard?.show()
+                }
+            } else if (messages.isEmpty()) {
                 EmptyChat(
                     model = modelLabel,
                     online = online,
@@ -829,6 +836,35 @@ private fun EmptyChat(model: String?, online: Boolean, compact: Boolean = false,
     }
 }
 
+
+/** Conversa nova no modo imagem: o convite e algumas ideias (tocar preenche o campo, dá para editar antes). */
+@Composable
+private fun EmptyImage(compact: Boolean, onSuggestion: (String) -> Unit) {
+    val c = Noc.colors
+    val ideas = listOf(
+        "Uma mansão brutalista no topo de uma montanha durante uma tempestade" to "Arquitetura",
+        "Retrato realista de um pescador idoso ao entardecer, luz dourada" to "Retrato",
+        "Frasco de perfume de vidro sobre mármore preto, foto de produto em estúdio" to "Produto",
+        "Ilustração estilo anime de uma cidade flutuante ao pôr do sol" to "Ilustração",
+    )
+    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.Bottom) {
+        Text("Crie\nqualquer imagem.", style = MaterialTheme.typography.displayMedium, color = c.text)
+        Spacer(Modifier.height(10.dp))
+        Text("Descreva em português. A imagem é feita na GPU do seu PC e chega aqui.", style = MaterialTheme.typography.bodyMedium, color = c.text2)
+        Spacer(Modifier.height(24.dp))
+        if (!compact) ideas.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                row.forEach { (prompt, label) ->
+                    Box(
+                        Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).background(c.surface).pressable { onSuggestion(prompt) }
+                            .padding(horizontal = 16.dp, vertical = 16.dp),
+                    ) { Text(label, style = MaterialTheme.typography.titleSmall, color = c.text) }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+    }
+}
 
 /** Aviso no modo imagem quando o PC ainda não pode criar com o motor escolhido. */
 private fun imageNote(

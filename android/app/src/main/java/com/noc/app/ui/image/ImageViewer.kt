@@ -115,6 +115,17 @@ fun ImageViewer(items: List<CreationEntity>, start: Int, actions: ViewerActions,
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        // tela cheia de verdade: a imagem vai por baixo das barras do sistema
+        val window = (androidx.compose.ui.platform.LocalView.current.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+        androidx.compose.runtime.SideEffect {
+            window?.let {
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(it, false)
+                it.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
+                it.setDimAmount(0f)
+                @Suppress("DEPRECATION")
+                run { it.statusBarColor = android.graphics.Color.TRANSPARENT; it.navigationBarColor = android.graphics.Color.TRANSPARENT }
+            }
+        }
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             HorizontalPager(state = pager, userScrollEnabled = !zoomed, modifier = Modifier.fillMaxSize()) { page ->
                 ZoomableImage(items[page], onTap = { chrome = !chrome }, onZoomChange = { if (page == pager.currentPage) zoomed = it })
@@ -149,13 +160,13 @@ fun ImageViewer(items: List<CreationEntity>, start: Int, actions: ViewerActions,
                             if (ImageFiles.needsPermission(context)) storagePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
                             else scope.launch { save(context, file) }
                         }
-                        Labeled(Icons.Rounded.Share, "Compartilhar") { ImageFiles.share(context, listOf(file)) }
+                        Labeled(Icons.Rounded.Share, "Enviar") { ImageFiles.share(context, listOf(file)) }
                         Labeled(Icons.Rounded.ContentCopy, "Copiar") {
                             ImageFiles.copy(context, file)
                             Toast.makeText(context, "Imagem copiada", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    actions.onRegenerate?.let { f -> Labeled(Icons.Rounded.Refresh, "Gerar de novo") { f(current); onDismiss() } }
+                    actions.onRegenerate?.let { f -> Labeled(Icons.Rounded.Refresh, "Refazer") { f(current); onDismiss() } }
                     actions.onVariation?.let { f -> Labeled(Icons.Rounded.Shuffle, "Variação") { f(current); onDismiss() } }
                     actions.onReusePrompt?.let { f -> Labeled(Icons.Rounded.EditNote, "Reutilizar") { f(current); onDismiss() } }
                     actions.onOpenConversation?.takeIf { current.conversationId != null }?.let { f -> Labeled(Icons.AutoMirrored.Rounded.Chat, "Conversa") { f(current); onDismiss() } }
@@ -280,7 +291,8 @@ private fun Round(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: S
 @Composable
 private fun Labeled(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
     Column(
-        Modifier.clip(RoundedCornerShape(14.dp)).pressable(onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp).width(64.dp),
+        Modifier.clip(RoundedCornerShape(14.dp)).pressable(onClick = onClick).padding(horizontal = 6.dp, vertical = 8.dp).width(72.dp)
+            .semantics { contentDescription = label },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(icon, null, tint = Color.White, modifier = Modifier.size(22.dp))
