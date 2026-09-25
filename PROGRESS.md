@@ -138,3 +138,24 @@
   listagem durante a carga de um modelo grande era lido como "parado" e o `lms server start` matava a carga.
 - DiagLog (diag.log): ciclo de vida das tarefas e erros crus, sem conteúdo.
 - Testes: 29 unitários; E2E fase 2 (8) + fase 1 (3) passando com os modelos reais.
+
+## Fase 2 — Marco B: Android (2026-09-25)
+- Perfis no topo do chat (⚡ Rápido / ◆ Inteligente / ◈ Profundo) com nome amigável, ícones de visão/raciocínio e estado de carga.
+- Imagens: câmera, galeria (até 6), colar, compartilhar de outro app; EXIF, redução que preserva texto, JPEG 88/92, SHA-256;
+  envio por blob com progresso real; miniaturas no composer e na mensagem; bloqueio elegante quando o modelo não enxerga.
+- Ditado: gravação 16 kHz com forma de onda, toque ou segurar, cancelar arrastando; áudio vai em pedaços enquanto fala; Whisper no PC;
+  dicionário pessoal; foco de áudio (ligação) e app em segundo plano param e transcrevem; falha de rede guarda o áudio para reenviar.
+  Build debug aceita files/debug-mic.wav no lugar do microfone (emulador sem microfone). Release não tem esse caminho.
+- Tarefas: fases reais no chat (fila/carregando ~s/analisando imagem/pensando/gerando/continuando no PC), notificação única de progresso
+  (cronômetro, etapa, tokens, Parar), "X terminou" com prévia, Copiar/Tentar de novo, agrupamento, privacidade na tela bloqueada,
+  deep link para a mensagem, sem aviso na conversa aberta; SyncWorker (WorkManager) após processo morto/reboot; Atividade; indicador global.
+- Room v2 (migração real: messages.modelName).
+### Testes reais no emulador (com o Companion/DevHost e os modelos reais)
+- Imagem: galeria → Qwen 3.5 9B leu "link down na porta 7" ✔
+- Voz: fala PT-BR real (WAV) → "Configura uma VLAN 102 na porta 2 do MikroTik e deixa a 24 como trunk." no campo ✔
+- A (tela bloqueada): notificação de progresso e "Qwen 3.5 9B terminou" com a tela apagada; toque abre a conversa ✔
+- D (sem internet no meio): "Continuando no seu PC…", PC terminou, rede voltou, resposta completa sincronizada, sem duplicar ✔
+- I (processo morto com kill -9 em segundo plano): WorkManager reabriu, buscou e notificou ✔
+- G (Parar pela notificação): cancelou no PC em 26 ms ✔
+- C (Wi-Fi→dados→Wi-Fi): reassinou a mesma tarefa duas vezes, terminou ✔ — BUG corrigido: o laço principal apagava a sessão nova
+  logo depois da troca de rede (corrida), deixando o app "conectado" sem sessão.
