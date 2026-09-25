@@ -29,7 +29,8 @@ public sealed record LmModel(
 
 public sealed record LmInstance(string Id, int ContextLength);
 
-public sealed record LmProbe(LmState State, IReadOnlyList<LmModel> Models, string? Error);
+/// <summary>Leitura do LM Studio. <see cref="Busy"/>: respondeu devagar demais (ex.: carregando um modelo grande) — não está parado.</summary>
+public sealed record LmProbe(LmState State, IReadOnlyList<LmModel> Models, string? Error, bool Busy = false);
 
 /// <summary>Um pedaço do streaming de /v1/chat/completions.</summary>
 public readonly record struct ChatDelta(string? Reasoning, string? Content, string? FinishReason, JsonObject? Usage);
@@ -66,12 +67,18 @@ public sealed class LmStudioClient : IDisposable
             cts.CancelAfter(TimeSpan.FromSeconds(4));
             using var res = await _http.GetAsync(Url("/api/v1/models"), cts.Token);
             if (!res.IsSuccessStatusCode)
-                return new LmProbe(LmState.Running, [], $"HTTP {(int)res.StatusCode}");
+                return new LmProbe(LmState.Running, [], $"HTTP {(int)res.StatusCode}: {ExtractError(await res.Content.ReadAsStringAsync(cts.Token))}");
             var json = JsonNode.Parse(await res.Content.ReadAsStringAsync(cts.Token))!;
             var models = json["models"]!.AsArray().Select(ParseModel).Where(m => m is not null).Select(m => m!).ToList();
             return new LmProbe(LmState.Running, models, null);
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or OperationCanceledException)
+        catch (Exception e) when (e is TaskCanceledException or OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            // Não respondeu a tempo, mas a porta está aberta: o LM Studio está ocupado (carregando um modelo grande
+            // trava a API por alguns segundos). Tratar isso como "parado" e religar mataria a carga.
+            return new LmProbe(LmState.Running, [], "sem resposta a tempo", Busy: true);
+        }
+        catch (HttpRequestException e)
         {
             if (ct.IsCancellationRequested) throw;
             return new LmProbe(LmStudioLocator.IsInstalled() ? LmState.Stopped : LmState.NotInstalled, [], e.Message);
@@ -108,15 +115,19 @@ public sealed class LmStudioClient : IDisposable
             Instances: instances);
     }
 
-    public async Task<(string InstanceId, double Seconds, int Context)> LoadAsync(string key, int contextLength, CancellationToken ct)
+    public async Task<(string InstanceId, double Seconds, int Context)> LoadAsync(string key, int contextLength, CancellationToken ct,
+        int? parallel = null, bool? mtp = null)
     {
         var body = new JsonObject
         {
             ["model"] = key,
             ["context_length"] = contextLength,
             ["flash_attention"] = true,
+            ["offload_kv_cache_to_gpu"] = true,
             ["echo_load_config"] = true,
         };
+        if (parallel is { } par) body["parallel"] = par;
+        if (mtp is { } m) body["speculative_draft_mtp"] = m;
         using var res = await _http.PostAsync(Url("/api/v1/models/load"), Json(body), ct);
         var text = await res.Content.ReadAsStringAsync(ct);
         if (!res.IsSuccessStatusCode) throw new LmStudioException("load_failed", ExtractError(text));
@@ -176,6 +187,30 @@ public sealed class LmStudioClient : IDisposable
                 yield return new ChatDelta(r, c, finish, usage?.DeepClone() as JsonObject);
             }
         }
+    }
+
+    /// <summary>Caminho de cada modelo na biblioteca (chave → caminho relativo), via `lms ls --json`.</summary>
+    public static async Task<Dictionary<string, string>> ListPathsAsync(CancellationToken ct)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!File.Exists(LmStudioLocator.LmsPath)) return map;
+        var psi = new ProcessStartInfo(LmStudioLocator.LmsPath, "ls --json")
+        {
+            CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+        };
+        using var p = Process.Start(psi)!;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        var text = await p.StandardOutput.ReadToEndAsync(timeout.Token);
+        await p.WaitForExitAsync(timeout.Token);
+        try
+        {
+            foreach (var m in (JsonNode.Parse(text) as JsonArray)?.OfType<JsonObject>() ?? [])
+                if (m["modelKey"]?.GetValue<string>() is { } k && m["path"]?.GetValue<string>() is { } path) map[k] = path;
+        }
+        catch (JsonException) { }
+        return map;
     }
 
     private static StringContent Json(JsonNode node) => new(node.ToJsonString(), Encoding.UTF8, "application/json");

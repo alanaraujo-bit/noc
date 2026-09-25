@@ -27,6 +27,14 @@ public sealed class GpuMonitor : IDisposable
         _timer = new Timer(_ => Sample(), null, 0, 5000);
     }
 
+    /// <summary>Leitura imediata (bloqueia até ~1 s). Usada antes de decidir quanto contexto cabe.</summary>
+    public GpuSample? SampleNow()
+    {
+        for (var i = 0; i < 20 && Volatile.Read(ref _busy) == 1; i++) Thread.Sleep(50);
+        Sample();
+        return Last;
+    }
+
     private void Sample()
     {
         if (!_available || Interlocked.Exchange(ref _busy, 1) == 1) return;

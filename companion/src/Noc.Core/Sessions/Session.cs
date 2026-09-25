@@ -265,25 +265,91 @@ public sealed class Session : IAsyncDisposable
 
             case "models.load":
             {
-                var key = Str(p, "model");
+                var key = ResolveModel(Str(p, "model"));
                 int? ctx = p["context"]?.GetValue<int>();
                 if (_host.Models.Find(key) is null) await _host.Models.RefreshAsync(ct);
                 if (_host.Models.Find(key) is null) throw new RpcException("model_not_found", "Modelo não encontrado");
+                if (_host.Jobs.Active.Any(j => j.Model != key && j.State != JobState.Queued))
+                    throw new RpcException("busy", "Há uma resposta sendo gerada com outro modelo. A troca acontece quando ela terminar.");
                 // Não amarra ao ciclo de vida da sessão: se o celular cair, o carregamento continua.
                 _ = Task.Run(async () =>
                 {
-                    try { await _host.Models.EnsureLoadedAsync(key, ctx, CancellationToken.None); }
+                    try { await _host.Models.EnsureLoadedAsync(key, ctx, CancellationToken.None, _host.Catalog.TierOf(key)); }
                     catch (Exception) { /* o evento "failed" já foi emitido */ }
                 });
-                _host.Security.Write(SecurityLevel.Info, "model.load", $"{DeviceName} pediu para carregar {key}", DeviceId, Route);
-                return new JsonObject { ["accepted"] = true };
+                _host.Security.Write(SecurityLevel.Info, "model.load", $"{DeviceName} pediu para carregar {_host.Models.DisplayName(key)}", DeviceId, Route);
+                return new JsonObject { ["accepted"] = true, ["model"] = key };
             }
 
             case "models.unload":
             {
-                var key = Str(p, "model");
+                var key = ResolveModel(Str(p, "model"));
+                if (_host.Jobs.Active.Any(j => j.Model == key && j.State != JobState.Queued))
+                    throw new RpcException("busy", "Este modelo está respondendo agora. Espere terminar ou pare a resposta.");
                 await _host.Models.UnloadAsync(key, ct);
                 return new JsonObject { ["ok"] = true };
+            }
+
+            case "models.update":
+            {
+                var key = Str(p, "model");
+                if (_host.Models.Find(key) is null) throw new RpcException("model_not_found", "Modelo não encontrado");
+                var prefs = _host.Catalog.Prefs(key);
+                if (p.ContainsKey("alias")) prefs.Alias = p["alias"]?.GetValue<string>() is { } a && a.Trim().Length is > 0 and <= 40 ? a.Trim() : null;
+                if (p["favorite"] is JsonValue fav) prefs.Favorite = fav.GetValue<bool>();
+                if (p["hidden"] is JsonValue hid) prefs.Hidden = hid.GetValue<bool>();
+                if (p.ContainsKey("context")) prefs.Context = p["context"]?.GetValue<int>() is int c and >= 2048 ? c : null;
+                if (p.ContainsKey("reasoning")) prefs.Reasoning = p["reasoning"]?.GetValue<string>() is { } r && r is "auto" or "off" or "on" or "low" or "medium" or "high" ? r : null;
+                if (p.ContainsKey("parallel")) prefs.Parallel = p["parallel"]?.GetValue<int>() is int par and >= 1 and <= 8 ? par : null;
+                if (p["clearError"]?.GetValue<bool>() == true) prefs.LastError = null;
+                _host.Catalog.Save();
+                return new JsonObject { ["models"] = _host.ModelsJson() };
+            }
+
+            case "models.plan":
+            {
+                var key = ResolveModel(Str(p, "model"));
+                var m = _host.Models.Find(key) ?? throw new RpcException("model_not_found", "Modelo não encontrado");
+                var plan = await _host.Models.PlanAsync(m, _host.Catalog.TierOf(key), p["context"]?.GetValue<int>(), ct);
+                return new JsonObject
+                {
+                    ["model"] = key, ["context"] = plan.Context, ["estimateGiB"] = plan.EstimateGiB is { } e ? Math.Round(e, 2) : null,
+                    ["budgetGiB"] = plan.BudgetGiB is { } b ? Math.Round(b, 2) : null, ["fits"] = plan.Fits, ["note"] = plan.Note,
+                    ["parallel"] = plan.Parallel, ["mtp"] = plan.Mtp,
+                };
+            }
+
+            case "models.bench":
+            {
+                var key = ResolveModel(Str(p, "model"));
+                if (_host.Models.Find(key) is null) throw new RpcException("model_not_found", "Modelo não encontrado");
+                if (!_host.Bench.TryStart(key, out var why)) throw new RpcException("busy", why ?? "Não foi possível testar agora");
+                return new JsonObject { ["accepted"] = true };
+            }
+
+            case "models.library":
+                return new JsonObject { ["items"] = _host.LibraryJson(), ["folders"] = new JsonArray(_host.Library.Folders.Select(f => (JsonNode)f).ToArray()) };
+
+            case "models.scan":
+                _ = Task.Run(() => _host.Library.ScanAndImportAsync(CancellationToken.None));
+                return new JsonObject { ["accepted"] = true };
+
+            case "tiers.set":
+            {
+                var tier = Str(p, "tier");
+                if (!Library.Tiers.All.Contains(tier)) throw new RpcException("bad_request", "perfil inválido");
+                var key = p["model"]?.GetValue<string>();
+                if (key is not null && _host.Models.Find(key) is null) throw new RpcException("model_not_found", "Modelo não encontrado");
+                _host.Catalog.AssignTier(tier, key);
+                return _host.BuildStatus();
+            }
+
+            case "models.default":
+            {
+                var key = p["model"]?.GetValue<string>();
+                if (key is not null && _host.Models.Find(key) is null) throw new RpcException("model_not_found", "Modelo não encontrado");
+                _host.Catalog.SetDefault(key, p["preload"]?.GetValue<bool>() ?? true);
+                return _host.BuildStatus();
             }
 
             case "lms.start":
@@ -297,18 +363,140 @@ public sealed class Session : IAsyncDisposable
             {
                 var jobId = Str(p, "job");
                 if (jobId.Length is < 8 or > 64) throw new RpcException("bad_request", "job inválido");
-                var model = Str(p, "model");
+                var existingJob = _host.Jobs.Get(jobId);
+                if (existingJob is not null)
+                {
+                    // mesmo pedido reenviado (queda de rede): é a mesma tarefa, nunca uma segunda geração
+                    SubscribeJob(existingJob, p["from"]?.GetValue<int>() ?? 0);
+                    return new JsonObject { ["job"] = existingJob.Id, ["existing"] = true, ["model"] = existingJob.Model };
+                }
+                var asked = Str(p, "model");
+                var tier = asked.StartsWith("tier:", StringComparison.Ordinal) ? asked[5..] : p["tier"]?.GetValue<string>();
+                var model = ResolveModel(asked);
                 int? ctx = p["context"]?.GetValue<int>();
                 var request = ChatRequestBuilder.Build(p);
-                var (job, existing) = _host.Jobs.Start(jobId, DeviceId!, model, ctx, request);
+                ApplyReasoningDefault(request, p, model, tier);
+                var label = p["label"]?.GetValue<string>() is { } l ? (l.Length > 80 ? l[..80] : l) : null;
+                var meta = p["meta"] as JsonObject;
+                if (meta is not null && meta.ToJsonString().Length > 512) meta = null;
+                var (job, existing) = _host.Jobs.Start(jobId, DeviceId!, model, ctx, request, tier, (JsonObject?)meta?.DeepClone(), label,
+                    p["background"]?.GetValue<bool>() ?? false);
                 SubscribeJob(job, p["from"]?.GetValue<int>() ?? 0);
-                return new JsonObject { ["job"] = job.Id, ["existing"] = existing };
+                return new JsonObject { ["job"] = job.Id, ["existing"] = existing, ["model"] = model, ["position"] = _host.Jobs.QueuePosition(job) };
             }
+
+            case "jobs.list":
+            {
+                var hours = Math.Clamp(p["hours"]?.GetValue<int>() ?? 24, 1, 24);
+                var arr = new JsonArray();
+                foreach (var j in _host.Jobs.Recent(TimeSpan.FromHours(hours)).Where(j => j.DeviceId == DeviceId || !j.IsFinished).Take(100))
+                    arr.Add(_host.Jobs.Describe(j, DeviceId));
+                return new JsonObject { ["jobs"] = arr };
+            }
+
+            case "jobs.get":
+            {
+                var ids = p["jobs"] as JsonArray ?? [];
+                var arr = new JsonArray();
+                foreach (var id in ids.Take(200))
+                {
+                    var j = id?.GetValue<string>() is { } s ? _host.Jobs.Get(s) : null;
+                    arr.Add(j is null ? new JsonObject { ["job"] = id?.GetValue<string>(), ["state"] = "unknown" } : _host.Jobs.Describe(j, DeviceId));
+                }
+                return new JsonObject { ["jobs"] = arr };
+            }
+
+            case "jobs.prioritize":
+            {
+                var job = _host.Jobs.Get(Str(p, "job"));
+                return new JsonObject { ["ok"] = job is not null && job.DeviceId == DeviceId && _host.Jobs.Prioritize(job) };
+            }
+
+            case "blob.has":
+            {
+                var missing = new JsonArray();
+                var partial = new JsonObject();
+                foreach (var h in (p["hashes"] as JsonArray ?? []).Take(32))
+                {
+                    var hash = h?.GetValue<string>() ?? "";
+                    if (!BlobStore.ValidHash(hash)) continue;
+                    var got = _host.Blobs.Received(hash);
+                    if (got < 0) continue;
+                    missing.Add(hash);
+                    if (got > 0) partial[hash] = got;
+                }
+                return new JsonObject { ["missing"] = missing, ["partial"] = partial };
+            }
+
+            case "blob.put":
+            {
+                var hash = Str(p, "hash");
+                var total = p["total"]?.GetValue<long>() ?? 0;
+                var offset = p["offset"]?.GetValue<long>() ?? 0;
+                var data = Convert.FromBase64String(Str(p, "data"));
+                try
+                {
+                    var done = _host.Blobs.Put(hash, total, offset, data);
+                    return new JsonObject { ["done"] = done, ["received"] = offset + data.Length };
+                }
+                catch (InvalidDataException e) { throw new RpcException("blob_corrupt", e.Message); }
+                catch (ArgumentException e) { throw new RpcException("bad_request", e.Message); }
+            }
+
+            case "diag.log":
+                return new JsonObject { ["entries"] = _host.Diag.Recent(Math.Clamp(p["max"]?.GetValue<int>() ?? 100, 1, 500), p["kind"]?.GetValue<string>()) };
+
+            case "stt.status":
+                return _host.Stt.ToJson();
+
+            case "stt.prepare":
+                if (!_host.Settings.VoiceEnabled) throw new RpcException("stt_off", "A transcrição de voz está desligada no PC.");
+                _ = Task.Run(() => _host.Stt.EnsureReadyAsync(CancellationToken.None));
+                return _host.Stt.ToJson();
+
+            case "stt.begin":
+            {
+                if (!_host.Settings.VoiceEnabled) throw new RpcException("stt_off", "A transcrição de voz está desligada no PC.");
+                var vocab = (p["vocab"] as JsonArray)?.Select(v => v?.GetValue<string>() ?? "").ToList();
+                _host.Stt.Begin(Str(p, "id"), DeviceId!, vocab);
+                // prepara o modelo enquanto a pessoa fala
+                if (!_host.Stt.Ready) _ = Task.Run(() => _host.Stt.EnsureReadyAsync(CancellationToken.None));
+                return _host.Stt.ToJson();
+            }
+
+            case "stt.chunk":
+                try
+                {
+                    _host.Stt.Append(Str(p, "id"), DeviceId!, p["seq"]?.GetValue<int>() ?? 0, Convert.FromBase64String(Str(p, "data")));
+                    return new JsonObject { ["ok"] = true };
+                }
+                catch (KeyNotFoundException) { throw new RpcException("stt_unknown", "Gravação não encontrada no PC"); }
+                catch (InvalidDataException e) { throw new RpcException("stt_bad", e.Message); }
+
+            case "stt.end":
+                try
+                {
+                    // não depende da sessão: se o celular trocar de rede agora, o resultado é pedido de novo por stt.result
+                    var id = Str(p, "id");
+                    var r = await _host.Stt.EndAsync(id, DeviceId!, CancellationToken.None);
+                    _host.Security.Write(SecurityLevel.Info, "stt", $"Ditado transcrito ({r.AudioMs / 1000.0:0.0} s de áudio em {r.ProcessMs} ms)", DeviceId, Route);
+                    return new JsonObject
+                    {
+                        ["text"] = r.Text, ["empty"] = r.Empty, ["quiet"] = r.Quiet, ["audioMs"] = r.AudioMs, ["processMs"] = r.ProcessMs, ["hint"] = r.Hint,
+                    };
+                }
+                catch (KeyNotFoundException) { throw new RpcException("stt_unknown", "Gravação não encontrada no PC"); }
+                catch (InvalidOperationException e) { throw new RpcException("stt_unavailable", e.Message); }
+
+            case "stt.cancel":
+                _host.Stt.Cancel(Str(p, "id"));
+                return new JsonObject { ["ok"] = true };
 
             case "chat.subscribe":
             {
                 var jobId = Str(p, "job");
                 var job = _host.Jobs.Get(jobId) ?? throw new RpcException("job_unknown", "Esta geração não existe mais no PC");
+                _host.Diag.Write("tarefa", $"tarefa {(jobId.Length > 8 ? jobId[..8] : jobId)} acompanhada de novo pelo celular a partir do evento {p["from"]?.GetValue<int>() ?? 0} ({Route})");
                 SubscribeJob(job, p["from"]?.GetValue<int>() ?? 0);
                 return new JsonObject { ["job"] = job.Id, ["lastSeq"] = job.LastSeq, ["finished"] = job.IsFinished };
             }
@@ -316,8 +504,8 @@ public sealed class Session : IAsyncDisposable
             case "chat.cancel":
             {
                 var job = _host.Jobs.Get(Str(p, "job"));
-                job?.Cancel();
-                return new JsonObject { ["ok"] = job is not null };
+                if (job is not null && !job.IsFinished) _host.Jobs.Cancel(job);
+                return new JsonObject { ["ok"] = job is not null, ["finished"] = job?.IsFinished };
             }
 
             case "devices.list":
@@ -353,6 +541,24 @@ public sealed class Session : IAsyncDisposable
             default:
                 throw new RpcException("unknown_method", method);
         }
+    }
+
+    private string ResolveModel(string modelOrTier)
+    {
+        try { return _host.Catalog.Resolve(modelOrTier); }
+        catch (LmStudioException e) { throw new RpcException(e.Code, e.Message); }
+    }
+
+    /// <summary>Sem escolha explícita de raciocínio: vale a do modelo (modo avançado) ou a do perfil (Rápido desliga).</summary>
+    private void ApplyReasoningDefault(JsonObject request, JsonObject p, string model, string? tier)
+    {
+        if ((p["params"] as JsonObject)?["reasoning"] is not null) return;
+        var m = _host.Models.Find(model);
+        var choice = _host.Catalog.Data.Models.TryGetValue(model, out var prefs) && prefs.Reasoning is { } r && r != "auto"
+            ? r
+            : Library.Tiers.DefaultReasoning(tier ?? _host.Catalog.TierOf(model));
+        if (choice == "off" && m?.ReasoningOptions.Contains("off") == true) request["reasoning_effort"] = "none";
+        else if (choice is "low" or "medium" or "high") request["reasoning_effort"] = choice;
     }
 
     private void SubscribeJob(ChatJob job, int from)

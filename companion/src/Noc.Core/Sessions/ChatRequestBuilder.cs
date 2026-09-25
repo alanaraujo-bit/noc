@@ -40,6 +40,15 @@ public static class ChatRequestBuilder
                         if (!url.StartsWith("data:image/", StringComparison.Ordinal)) throw new RpcException("bad_request", "imagem inválida");
                         arr.Add(new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = url } });
                     }
+                    else if (type == "image_ref")
+                    {
+                        // imagem já enviada ao PC (blob.put): o pedido só cita o hash
+                        var hash = part!["hash"]?.GetValue<string>() ?? "";
+                        var mime = part["mime"]?.GetValue<string>() ?? "image/jpeg";
+                        if (!Jobs.BlobStore.ValidHash(hash) || !mime.StartsWith("image/", StringComparison.Ordinal))
+                            throw new RpcException("bad_request", "imagem inválida");
+                        arr.Add(new JsonObject { ["type"] = "image_ref", ["hash"] = hash, ["mime"] = mime });
+                    }
                 }
                 outContent = arr;
             }
@@ -77,6 +86,53 @@ public static class ChatRequestBuilder
             case "high": req["reasoning_effort"] = "high"; break;
         }
         return req;
+    }
+
+    /// <summary>Quantas imagens o pedido carrega (para o estado "Processando imagem").</summary>
+    public static int CountImages(JsonObject request) =>
+        (request["messages"] as JsonArray)?.Sum(m => (m?["content"] as JsonArray)?.Count(p => p?["type"]?.GetValue<string>() is "image_url" or "image_ref") ?? 0) ?? 0;
+
+    /// <summary>Troca as referências de imagem pelos bytes (data URL) na hora de mandar para o LM Studio.</summary>
+    public static JsonObject ResolveImages(JsonObject request, Func<string, byte[]?> blob, bool vision)
+    {
+        var copy = (JsonObject)request.DeepClone();
+        var messages = copy["messages"] as JsonArray;
+        if (messages is null) return copy;
+        var lastUser = messages.Select((m, i) => (m, i)).LastOrDefault(x => x.m?["role"]?.GetValue<string>() == "user").i;
+        for (var i = 0; i < messages.Count; i++)
+        {
+            if (messages[i]?["content"] is not JsonArray parts) continue;
+            var outParts = new JsonArray();
+            var dropped = 0;
+            foreach (var part in parts)
+            {
+                var type = part?["type"]?.GetValue<string>();
+                if (type is "image_ref" or "image_url")
+                {
+                    if (!vision)
+                    {
+                        if (i == lastUser) throw new Jobs.JobFailure("no_vision", "Este modelo não entende imagens. Escolha um modelo com visão.");
+                        dropped++;
+                        continue;
+                    }
+                    if (type == "image_ref")
+                    {
+                        var hash = part!["hash"]!.GetValue<string>();
+                        var bytes = blob(hash) ?? throw new Jobs.JobFailure("blob_missing", "Uma imagem desta conversa não está mais no PC.");
+                        outParts.Add(new JsonObject
+                        {
+                            ["type"] = "image_url",
+                            ["image_url"] = new JsonObject { ["url"] = $"data:{part["mime"]!.GetValue<string>()};base64,{Convert.ToBase64String(bytes)}" },
+                        });
+                        continue;
+                    }
+                }
+                outParts.Add(part!.DeepClone());
+            }
+            if (dropped > 0) outParts.Add(new JsonObject { ["type"] = "text", ["text"] = $"\n[{dropped} imagem(ns) enviada(s) antes; este modelo não vê imagens]" });
+            messages[i]!["content"] = outParts;
+        }
+        return copy;
     }
 
     private static void CopyDouble(JsonObject from, JsonObject to, string key, double min, double max)

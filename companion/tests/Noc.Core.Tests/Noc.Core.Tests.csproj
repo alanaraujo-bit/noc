@@ -21,4 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Noc.Core\Noc.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="fixtures/*.*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

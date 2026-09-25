@@ -13,6 +13,14 @@ public interface ISessionHost
     SecurityLog Security { get; }
     ModelManager Models { get; }
     JobManager Jobs { get; }
+    Library.ModelCatalog Catalog { get; }
+    Library.ModelLibrary Library { get; }
+    Library.Benchmark Bench { get; }
+    BlobStore Blobs { get; }
+    Speech.SttService Stt { get; }
+    Storage.CompanionSettings Settings { get; }
+    JsonArray LibraryJson();
+    Diagnostics.DiagLog Diag { get; }
 
     JsonObject PcInfo();
     JsonObject BuildStatus();

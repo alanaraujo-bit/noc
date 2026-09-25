@@ -23,6 +23,15 @@ public sealed class CompanionSettings
     public bool FirstRunDone { get; set; }
     /// <summary>system | light | dark</summary>
     public string Theme { get; set; } = "system";
+    /// <summary>Ditado por voz (Whisper local na GPU).</summary>
+    public bool VoiceEnabled { get; set; } = true;
+    /// <summary>Procurar GGUFs novos no Downloads (e nas pastas extras) e colocá-los no LM Studio sozinho.</summary>
+    public bool AutoImportModels { get; set; } = true;
+    public List<string> ExtraModelFolders { get; set; } = [];
+    /// <summary>Permite baixar componentes que faltam (mmproj oficial, modelo de voz) de fontes públicas.</summary>
+    public bool AllowComponentDownloads { get; set; } = true;
+    /// <summary>Religa o servidor do LM Studio sozinho se ele cair.</summary>
+    public bool KeepLmServerAlive { get; set; } = true;
 
     private static readonly JsonSerializerOptions Json = new()
     {

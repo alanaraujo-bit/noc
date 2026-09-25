@@ -3,11 +3,13 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using Noc.Core.Crypto;
 using Noc.Core.Jobs;
+using Noc.Core.Library;
 using Noc.Core.LmStudio;
 using Noc.Core.Net;
 using Noc.Core.Platform;
 using Noc.Core.Security;
 using Noc.Core.Sessions;
+using Noc.Core.Speech;
 using Noc.Core.Storage;
 
 namespace Noc.Core;
@@ -28,9 +30,18 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
     public PairingManager Pairing { get; } = new();
     public SecurityLog Security { get; } = new();
     public LmStudioClient Lm { get; }
+    public ModelCatalog Catalog { get; }
     public ModelManager Models { get; }
+    public ModelLibrary Library { get; }
+    public BlobStore Blobs { get; } = new();
+    public SttService Stt { get; } = new();
     public JobManager Jobs { get; }
+    public Benchmark Bench { get; }
     public GpuMonitor Gpu { get; } = new();
+    public Diagnostics.DiagLog Diag { get; } = new();
+
+    /// <summary>Recursos que este Companion oferece (o celular se adapta a Companions antigos).</summary>
+    public static readonly string[] Features = ["tiers", "blobs", "stt", "jobs2", "bench", "library"];
     public LanServer Lan { get; }
     public RelayClient Relay { get; }
 
@@ -40,6 +51,11 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
     private readonly Lock _activityLock = new();
     private readonly CancellationTokenSource _cts = new();
     private Timer? _pollTimer;
+    private int _polling;
+    private DateTimeOffset _lastLmRestart = DateTimeOffset.MinValue;
+    private int _lmRestartFailures;
+    private bool _preloadDone;
+    private LmState _lastLmState = LmState.Unknown;
     private Timer? _statusDebounce;
     private int _handshakesThisMinute;
     private DateTimeOffset _minuteStart = DateTimeOffset.Now;
@@ -53,26 +69,55 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
         Settings = CompanionSettings.Load();
         Identity = PcIdentity.LoadOrCreate();
         Lm = new LmStudioClient(() => Settings.LmStudioPort > 0 ? Settings.LmStudioPort : LmStudioLocator.ConfiguredPort());
-        Models = new ModelManager(Lm, Settings);
-        Jobs = new JobManager(Lm, Models);
+        Catalog = new ModelCatalog();
+        // Enquanto a voz não está carregada, reserva a VRAM dela para o modelo não ocupar tudo.
+        Models = new ModelManager(Lm, Settings, Catalog, Gpu, () => Settings.VoiceEnabled && !Stt.Ready ? 1.3 : 0);
+        Library = new ModelLibrary(() => Settings.ExtraModelFolders, () => Settings.AllowComponentDownloads);
+        Jobs = new JobManager(Lm, Models, Blobs);
+        Bench = new Benchmark(Lm, Models, Jobs, Gpu);
         Lan = new LanServer(this);
         Relay = new RelayClient(this, () => Settings.RelayUrl);
 
-        Models.Changed += OnStateChanged;
+        Models.Changed += () =>
+        {
+            Catalog.AutoAssign(Models.Last.Models, (Gpu.Last?.VramTotalMb ?? 0) / 1024.0);
+            OnStateChanged();
+        };
+        Catalog.Changed += () => Changed?.Invoke();
         Models.ModelEvent += e =>
         {
             Broadcast("model", e);
-            var model = Models.Find(e["model"]!.GetValue<string>())?.DisplayName ?? e["model"]!.GetValue<string>();
+            var model = e["name"]?.GetValue<string>() ?? e["model"]!.GetValue<string>();
             switch (e["state"]!.GetValue<string>())
             {
-                case "loading": Activity($"Carregando {model}…", "model"); break;
-                case "loaded": Activity($"{model} carregado em {e["seconds"]} s", "model"); break;
+                case "loading" when e["retry"] is null: Activity($"Carregando {model}…", "model"); break;
+                case "loaded": Activity($"{model} pronto (carregado em {e["seconds"]} s)", "model"); break;
                 case "unloaded": Activity($"{model} descarregado", "model"); break;
-                case "failed": Activity($"Falha ao carregar {model}", "error"); break;
+                case "failed": Activity($"Não foi possível carregar {model}: {e["error"]}", "error"); break;
             }
         };
+        Library.Changed += () => { Broadcast("library", new JsonObject { ["items"] = LibraryJson() }); Changed?.Invoke(); };
+        Library.Activity += Activity;
+        Library.Imported += () => _ = Task.Run(async () =>
+        {
+            // o LM Studio leva uns segundos para indexar o arquivo novo
+            for (var i = 0; i < 5; i++) { await Task.Delay(2000); try { await Models.RefreshAsync(_cts.Token); } catch { } }
+        });
+        Models.RawLog += m => Diag.Write("modelo", m);
+        Jobs.Trace += m => Diag.Write("tarefa", m);
+        Stt.Log += (m, _) => Diag.Write("voz", m);
+        Models.ModelEvent += e => Diag.Write("modelo", e.ToJsonString());
+        Stt.Changed += OnStateChanged;
+        Stt.Log += Activity;
         Jobs.Changed += OnStateChanged;
-        Gpu.Changed += OnStateChanged;
+        Jobs.Log += Activity;
+        Bench.Update += e => { Broadcast("bench", e); Changed?.Invoke(); };
+        Bench.Log += Activity;
+        Gpu.Changed += () =>
+        {
+            Catalog.AutoAssign(Models.Last.Models, (Gpu.Last?.VramTotalMb ?? 0) / 1024.0);
+            OnStateChanged();
+        };
         Relay.Changed += () =>
         {
             if (Relay.State == RelayState.Online) Activity("Acesso remoto ativo", "net");
@@ -92,18 +137,90 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
     {
         Security.Write(SecurityLevel.Info, "start", $"Companion iniciado (v{Version})");
         var probe = await Models.RefreshAsync();
+        _lastLmState = probe.State;
+        Task? lmStart = null;
         if (probe.State == LmState.Stopped && Settings.AutoStartLmServer)
         {
             Activity("Iniciando o servidor do LM Studio…", "lm");
-            _ = StartLmServerAsync(_cts.Token);
+            lmStart = StartLmServerAsync(_cts.Token);
         }
         if (Settings.LanEnabled) await Lan.StartAsync(Settings.LanPort);
         if (Settings.RemoteEnabled) Relay.Start();
-        _pollTimer = new Timer(async _ =>
+        // Tarefas que estavam na fila ou gerando quando o PC/Companion desligou.
+        Jobs.RecoverFromDisk();
+        _pollTimer = new Timer(_ => _ = HealthTickAsync(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        _ = Task.Run(async () =>
         {
-            try { await Models.RefreshAsync(_cts.Token); } catch { }
-        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+            try
+            {
+                if (lmStart is not null) await lmStart;
+                // ordem importa para a VRAM: primeiro a voz (pequena), depois o modelo padrão
+                if (Settings.VoiceEnabled) await Stt.EnsureReadyAsync(_cts.Token);
+                await PreloadAsync();
+                if (Settings.AutoImportModels)
+                {
+                    Library.Watch();
+                    await Library.ScanAndImportAsync(_cts.Token);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception e) { Activity("Falha na preparação inicial: " + e.Message, "error"); }
+        });
         Activity("Companion pronto", "info");
+    }
+
+    /// <summary>
+    /// Deixa o modelo padrão carregado para a primeira mensagem sair rápido. Não briga com o usuário:
+    /// não recarrega se ele descarregou de propósito, e não troca um modelo que já está carregado.
+    /// </summary>
+    public async Task PreloadAsync()
+    {
+        var def = Catalog.Data.DefaultModel;
+        if (!Catalog.Data.Preload || def is null || Models.UserUnloaded || Jobs.Active.Count > 0) return;
+        var probe = await Models.RefreshAsync(_cts.Token);
+        if (probe.State != LmState.Running || probe.Models.Any(m => m.Loaded && m.Type == "llm")) { _preloadDone = probe.State == LmState.Running; return; }
+        if (Models.Find(def) is null) return;
+        _preloadDone = true;
+        Activity($"Deixando {Models.DisplayName(def)} pronto para você", "model");
+        try { await Models.EnsureLoadedAsync(def, null, _cts.Token, Catalog.TierOf(def)); }
+        catch (LmStudioException) { /* o evento "failed" já explica */ }
+    }
+
+    /// <summary>Monitor de saúde (a cada 5 s): lê o LM Studio, religa o servidor se ele cair e refaz o pré-carregamento.</summary>
+    private async Task HealthTickAsync()
+    {
+        if (Interlocked.Exchange(ref _polling, 1) == 1) return;
+        try
+        {
+            var probe = await Models.RefreshAsync(_cts.Token);
+            if (probe.State != _lastLmState)
+            {
+                if (probe.State == LmState.Running && _lastLmState != LmState.Unknown) Activity("O LM Studio voltou a responder", "lm");
+                else if (_lastLmState == LmState.Running) Activity("O LM Studio parou de responder", "warn");
+                _lastLmState = probe.State;
+            }
+            // Só religa quando o servidor está de fato fora (porta fechada), ou travado há 2 min sem nada rodando.
+            // Nunca durante uma carga de modelo ou geração: religar o servidor mata o que está em andamento.
+            var hung = probe.Busy && Models.ConsecutiveBusy >= 24;
+            var idle = Models.Op == ModelOpState.Idle && Jobs.Active.All(j => j.State == JobState.Queued) && !Bench.Busy;
+            if ((probe.State == LmState.Stopped || hung) && idle && Settings.KeepLmServerAlive && Settings.AutoStartLmServer)
+            {
+                if (hung) Diag.Write("lm", "LM Studio sem responder há 2 min; religando o servidor");
+                // espera crescente entre tentativas (30 s, 60 s, 120 s… até 10 min)
+                var wait = TimeSpan.FromSeconds(Math.Min(600, 30 * Math.Pow(2, Math.Min(5, _lmRestartFailures))));
+                if (DateTimeOffset.Now - _lastLmRestart > wait)
+                {
+                    _lastLmRestart = DateTimeOffset.Now;
+                    Activity("Religando o servidor do LM Studio…", "lm");
+                    var (ok, _) = await StartLmServerAsync(_cts.Token);
+                    _lmRestartFailures = ok ? 0 : _lmRestartFailures + 1;
+                    if (ok) _preloadDone = false;
+                }
+            }
+            if (probe.State == LmState.Running && !_preloadDone && Models.Op == ModelOpState.Idle) await PreloadAsync();
+        }
+        catch (Exception) { }
+        finally { Interlocked.Exchange(ref _polling, 0); }
     }
 
     // ---------------- estado ----------------
@@ -149,7 +266,26 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
             ["os"] = Environment.OSVersion.VersionString,
             ["lan"] = lan,
             ["relay"] = Settings.RemoteEnabled ? Settings.RelayUrl : null,
+            ["features"] = new JsonArray(Features.Select(f => (JsonNode)f).ToArray()),
         };
+    }
+
+    public JsonArray LibraryJson()
+    {
+        var arr = new JsonArray();
+        foreach (var i in Library.Items.Take(30)) arr.Add(i.ToJson());
+        return arr;
+    }
+
+    private JsonObject TiersJson()
+    {
+        var o = new JsonObject();
+        foreach (var t in Tiers.All)
+        {
+            var key = Catalog.ModelForTier(t);
+            o[t] = key is null ? null : new JsonObject { ["model"] = key, ["name"] = Models.DisplayName(key), ["label"] = Tiers.Label(t) };
+        }
+        return o;
     }
 
     public JsonObject BuildStatus()
@@ -159,18 +295,17 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
         foreach (var m in probe.Models.Where(m => m.Loaded && m.Type == "llm"))
             loaded.Add(new JsonObject
             {
-                ["model"] = m.Key, ["name"] = m.DisplayName, ["context"] = m.Instances[0].ContextLength,
-                ["vision"] = m.Vision,
+                ["model"] = m.Key, ["name"] = Catalog.DisplayName(m, probe.Models), ["context"] = m.Instances[0].ContextLength,
+                ["vision"] = m.Vision, ["tier"] = Catalog.TierOf(m.Key),
             });
-        var active = Jobs.Active;
         var generating = new JsonArray();
-        foreach (var j in active)
-            generating.Add(new JsonObject
-            {
-                ["job"] = j.Id, ["model"] = j.Model, ["state"] = j.State.ToString().ToLowerInvariant(),
-                ["tps"] = j.LiveTokensPerSecond is { } t ? Math.Round(t, 1) : null, ["tokens"] = j.Tokens,
-                ["mine"] = false,
-            });
+        foreach (var j in Jobs.Active)
+        {
+            var d = Jobs.Describe(j);
+            d["device"] = j.DeviceId;
+            generating.Add(d);
+        }
+        var lastDone = Jobs.Recent(TimeSpan.FromHours(24)).FirstOrDefault(j => j.IsFinished && j.EndStats?["tps"] is not null);
         return new JsonObject
         {
             ["lm"] = new JsonObject
@@ -190,12 +325,26 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
             {
                 ["kind"] = Models.Op == ModelOpState.Loading ? "loading" : "unloading",
                 ["model"] = Models.OpModel,
+                ["name"] = Models.OpModel is { } om ? Models.DisplayName(om) : null,
                 ["since"] = Models.OpStarted?.ToUnixTimeMilliseconds(),
+                ["expectedSeconds"] = Models.OpExpectedSeconds,
             },
             ["gpu"] = Gpu.Last?.ToJson(),
             ["jobs"] = generating,
+            ["tiers"] = TiersJson(),
+            ["defaultModel"] = Catalog.Data.DefaultModel,
+            ["stt"] = Settings.VoiceEnabled ? Stt.ToJson() : new JsonObject { ["state"] = "off" },
+            ["bench"] = Bench.Busy ? new JsonObject { ["model"] = Bench.RunningModel, ["step"] = Bench.Step, ["progress"] = Bench.Progress } : null,
+            ["importing"] = Library.Busy,
+            ["last"] = lastDone is null ? null : new JsonObject
+            {
+                ["model"] = lastDone.Model, ["name"] = Models.DisplayName(lastDone.Model),
+                ["tps"] = lastDone.EndStats!["tps"]?.DeepClone(), ["ttftMs"] = lastDone.EndStats["ttftMs"]?.DeepClone(),
+                ["at"] = lastDone.FinishedAt?.ToUnixTimeMilliseconds(),
+            },
             ["sessions"] = _sessions.Count,
             ["remote"] = Relay.State.ToString().ToLowerInvariant(),
+            ["companion"] = Version,
             ["ts"] = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
         };
     }
@@ -204,14 +353,29 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
     {
         var vramMb = Gpu.Last?.VramTotalMb ?? 0;
         var arr = new JsonArray();
-        foreach (var m in Models.Last.Models)
+        var all = Models.Last.Models;
+        foreach (var m in all)
         {
             var reasoning = new JsonArray();
             foreach (var o in m.ReasoningOptions) reasoning.Add(o);
+            var prefs = Catalog.Data.Models.TryGetValue(m.Key, out var p) ? p : new ModelPrefs();
+            // cabe na GPU? usa a estimativa do LM Studio (8k) se já calculada; senão, o tamanho do arquivo
+            Catalog.Data.Estimates.TryGetValue($"{m.Key}|{m.SizeBytes}|8192", out var est8k);
+            bool? fits = vramMb <= 0 ? null : est8k > 0 ? est8k < vramMb / 1024.0 - 0.8 : m.SizeBytes / 1048576.0 < vramMb * 0.95;
             arr.Add(new JsonObject
             {
                 ["key"] = m.Key,
-                ["name"] = m.DisplayName,
+                ["name"] = Catalog.DisplayName(m, all),
+                ["technical"] = m.DisplayName,
+                ["alias"] = prefs.Alias,
+                ["favorite"] = prefs.Favorite,
+                ["hidden"] = prefs.Hidden,
+                ["tier"] = Catalog.TierOf(m.Key),
+                ["isDefault"] = Catalog.Data.DefaultModel == m.Key,
+                ["lastError"] = prefs.LastError,
+                ["lastLoadSeconds"] = prefs.LastLoadSeconds,
+                ["bench"] = prefs.Benchmark?.DeepClone(),
+                ["perf"] = new JsonObject { ["context"] = prefs.Context, ["reasoning"] = prefs.Reasoning, ["parallel"] = prefs.Parallel },
                 ["type"] = m.Type,
                 ["arch"] = m.Architecture,
                 ["quant"] = m.Quantization,
@@ -224,8 +388,7 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
                 ["reasoningDefault"] = m.ReasoningDefault,
                 ["loaded"] = m.Loaded,
                 ["context"] = m.Loaded ? m.Instances[0].ContextLength : null,
-                // Estimativa simples: pesos maiores que ~95% da VRAM não cabem inteiros na GPU.
-                ["fitsGpu"] = vramMb > 0 ? m.SizeBytes / 1048576.0 < vramMb * 0.95 : null,
+                ["fitsGpu"] = fits,
             });
         }
         return arr;
@@ -387,6 +550,9 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
         await Relay.DisposeAsync();
         await Lan.DisposeAsync();
         Jobs.Dispose();
+        Library.Dispose();
+        Stt.Dispose();
+        Blobs.Dispose();
         Gpu.Dispose();
         Lm.Dispose();
         Identity.Dispose();

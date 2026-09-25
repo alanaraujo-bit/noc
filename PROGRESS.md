@@ -117,3 +117,24 @@
 - O PC é a fonte da verdade de modelos/perfis/tarefas; o celular é interface e cache.
 - STT roda no PC (GPU), áudio vai cifrado pelo mesmo canal E2E; nada de nuvem.
 - Compatibilidade: welcome anuncia "features"; app novo degrada com Companion antigo e vice-versa. Room: migrações reais.
+
+## Fase 2 — Marco A: Companion (núcleo) — 2026-09-25
+- Library/: leitor GGUF, reparo de GGUF legado (cópia corrigida, original intacto), importação por hard link do Downloads
+  (e pastas extras) para ~/.lmstudio/models/local/<Nome>-GGUF, pareamento automático de mmproj, busca do mmproj oficial no HF
+  (cabeçalho conferido via Range + SHA-256), FileSystemWatcher (importa GGUF novo 20 s depois de parar de crescer).
+- Catálogo (models.json): nomes amigáveis, perfis Rápido/Inteligente/Profundo automáticos (até o usuário escolher),
+  modelo padrão + pré-carga, apelido/favorito/oculto, perfil de desempenho por modelo, estimativas de VRAM (lms --estimate-only, cacheadas).
+- Planejador de carga: maior contexto (até o alvo do perfil: 32k; Profundo 64k) que cabe na VRAM medida na hora; MTP quando o
+  GGUF tem cabeça MTP; nova tentativa com menos contexto se faltar memória; 1 nova tentativa em falha genérica.
+- Fila (JobManager v2): FIFO, até 2 simultâneas do mesmo modelo, outro modelo espera; fases reais
+  queued(ahead)/starting/loading/preparing(images)/thinking/generating; diário DPAPI com checkpoint a cada 3 s;
+  reinício do Companion => tarefa continua do ponto (continuação com a resposta parcial) — testado; queda do LM Studio => espera e retoma;
+  watchdog de 3 min; cancelar na fila; priorizar; jobs.list/jobs.get; pausa durante benchmark.
+- BlobStore: imagens por SHA-256 em pedaços (blob.has/blob.put), DPAPI, 7 dias; pedido cita image_ref (histórico não reenvia bytes).
+- STT: Whisper large-v3-turbo q8 (Vulkan) no PC; stt.begin/chunk/end; porta de energia, filtro de frases-fantasma, ganho para voz baixa,
+  dicionário pessoal no prompt + correção ortográfica/fonética. ~250 ms por frase.
+- Benchmark real (carga, TTFT, tok/s x3, leitura de ~6k tokens, VRAM, visão com imagem de teste).
+- Monitor de saúde: só religa o LM Studio com porta fechada (ou travado 2 min sem nada rodando). BUG REAL corrigido: timeout da
+  listagem durante a carga de um modelo grande era lido como "parado" e o `lms server start` matava a carga.
+- DiagLog (diag.log): ciclo de vida das tarefas e erros crus, sem conteúdo.
+- Testes: 29 unitários; E2E fase 2 (8) + fase 1 (3) passando com os modelos reais.

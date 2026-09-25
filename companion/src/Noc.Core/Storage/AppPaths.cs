@@ -20,6 +20,9 @@ public static class AppPaths
         set { _root = value; Directory.CreateDirectory(value); }
     }
 
+    /// <summary>A pasta de dados padrão do Companion instalado (ignora NOC_DATA_DIR).</summary>
+    public static string DefaultRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Noc");
+
     public static string Identity => Path.Combine(Root, "identity.bin");
     public static string Devices => Path.Combine(Root, "devices.json");
     public static string Settings => Path.Combine(Root, "settings.json");

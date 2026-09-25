@@ -11,6 +11,12 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\bench-vision.png" LogicalName="bench-vision.png" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Noc.Core.Tests" />

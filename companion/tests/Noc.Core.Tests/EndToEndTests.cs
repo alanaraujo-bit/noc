@@ -16,10 +16,14 @@ public class EndToEndTests(ITestOutputHelper log)
 {
     private static bool Enabled => Environment.GetEnvironmentVariable("NOC_E2E") == "1";
 
-    private static async Task<CompanionHost> StartHostAsync(bool remote)
+    internal static async Task<CompanionHost> StartHostAsync(bool remote, string? root = null, bool voice = false)
     {
-        AppPaths.Root = Path.Combine(Path.GetTempPath(), "noc-e2e-" + Guid.NewGuid().ToString("N")[..8]);
+        AppPaths.Root = root ?? Path.Combine(Path.GetTempPath(), "noc-e2e-" + Guid.NewGuid().ToString("N")[..8]);
         var host = new CompanionHost();
+        host.Settings.VoiceEnabled = voice;
+        host.Settings.AutoImportModels = false;
+        host.Settings.KeepLmServerAlive = false;
+        host.Catalog.Data.Preload = false;
         host.Settings.LanPort = 47900 + Random.Shared.Next(0, 90);
         host.Settings.RemoteEnabled = remote;
         host.Settings.AutoStartLmServer = false;
@@ -102,7 +106,8 @@ public class EndToEndTests(ITestOutputHelper log)
         log.WriteLine($"resposta: {content} | {end.ToJsonString()}");
         Assert.Contains("pong", content, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("stop", end["reason"]!.GetValue<string>());
-        Assert.True(end["stats"]!["tps"]!.GetValue<double>() > 1);
+        // tokens/s só existe quando a resposta tem tokens suficientes para medir
+        if (end["stats"]!["completionTokens"]?.GetValue<int>() > 3) Assert.True(end["stats"]!["tps"]!.GetValue<double>() > 1);
     }
 
     [Fact]
@@ -234,12 +239,7 @@ public class EndToEndTests(ITestOutputHelper log)
         await host.DisposeAsync();
 
         // novo processo do Companion, mesma pasta de dados: o job terminado ainda pode ser buscado
-        AppPaths.Root = dataDir;
-        await using var host2 = new CompanionHost();
-        host2.Settings.LanPort = port + 1;
-        host2.Settings.RemoteEnabled = false;
-        host2.Settings.AutoStartLmServer = false;
-        await host2.StartAsync();
+        await using var host2 = await StartHostAsync(remote: false, root: dataDir);
         await using var c2 = await TestClient.ConnectAsync($"ws://127.0.0.1:{host2.Lan.Port}/v1/ws", HandshakeMode.Session, th => TestClient.SessionAuth(th, device));
         var sub = await c2.CallAsync("chat.subscribe", new JsonObject { ["job"] = job, ["from"] = 0 });
         Assert.True(sub["ok"]!.GetValue<bool>(), sub.ToJsonString());
