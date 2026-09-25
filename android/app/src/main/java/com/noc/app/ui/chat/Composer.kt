@@ -174,11 +174,13 @@ fun Composer(
                 .background(c.surface)
                 .padding(top = 6.dp),
         ) {
-            if (recording != null) {
+            if (recording != null && !recording.hold) {
                 RecordingBar(recording, onCancel = onVoiceCancel, onStop = onVoiceStop)
                 return@Column
             }
-            Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp)) {
+            // segurando para falar: o botão do microfone continua no mesmo lugar (o gesto de soltar depende dele)
+            if (recording != null) RecordingBar(recording, onCancel = onVoiceCancel, onStop = onVoiceStop)
+            else Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp)) {
                 if (value.text.isEmpty()) {
                     Text(if (transcribing) "Transcrevendo…" else "Mensagem", style = MaterialTheme.typography.bodyLarge, color = c.text3,
                         modifier = if (transcribing) Modifier.pulsing() else Modifier)
@@ -202,7 +204,8 @@ fun Composer(
                 Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                RoundIcon(Icons.Rounded.Add, "Anexar", onClick = onAttach)
+                if (recording != null) Spacer(Modifier.weight(1f)) else RoundIcon(Icons.Rounded.Add, "Anexar", onClick = onAttach)
+                if (recording == null) {
                 // Modelo e estilo ficam à mão, sem poluir: um toque abre as opções.
                 Row(
                     Modifier
@@ -221,8 +224,10 @@ fun Composer(
                     )
                 }
                 RoundIcon(Icons.Rounded.Tune, "Ajustes da conversa", tint = if (hasOverrides) c.accent else c.text2, onClick = onTune)
+                }
                 Spacer(Modifier.width(4.dp))
                 val mode = when {
+                    recording?.hold == true -> 1
                     generating && !canSend -> 2
                     canSend || !voiceEnabled -> 0
                     else -> 1 // campo vazio: microfone
@@ -297,15 +302,22 @@ private fun MicButton(transcribing: Boolean, holdToTalk: Boolean, onTap: () -> U
                     if (!holdToTalk) { onTap(); return@awaitEachGesture }
                     onHoldStart()
                     var cancel = false
-                    while (true) {
-                        val e = awaitPointerEvent()
-                        val ch = e.changes.firstOrNull() ?: break
-                        val dx = start.x - ch.position.x
-                        val dy = start.y - ch.position.y
-                        cancel = dx > cancelDistance || dy > cancelDistance * 1.5f
-                        if (!ch.pressed) break
+                    var ended = false
+                    try {
+                        while (true) {
+                            val e = awaitPointerEvent()
+                            val ch = e.changes.firstOrNull() ?: break
+                            val dx = start.x - ch.position.x
+                            val dy = start.y - ch.position.y
+                            cancel = dx > cancelDistance || dy > cancelDistance * 1.5f
+                            if (!ch.pressed) break
+                        }
+                        ended = true
+                        onHoldEnd(cancel)
+                    } finally {
+                        // o gesto foi interrompido (tela mudou, app saiu): nunca deixa gravando
+                        if (!ended) onHoldEnd(false)
                     }
-                    onHoldEnd(cancel)
                 }
             }
             .semantics { contentDescription = "Ditar mensagem" },

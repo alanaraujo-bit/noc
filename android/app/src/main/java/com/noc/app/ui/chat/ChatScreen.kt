@@ -253,7 +253,8 @@ fun ChatScreen(
     }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         container.voice.dismissProblem()
-        if (granted) container.voice.start(hold = false)
+        // negado: start() mostra o aviso com “Permitir” (abre as configurações do app)
+        container.voice.start(hold = false)
     }
 
     val choice = cfg?.choice
