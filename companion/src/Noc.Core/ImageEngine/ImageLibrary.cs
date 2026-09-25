@@ -96,7 +96,11 @@ public static class ModelDetector
         (h.M("ss_base_model_version") ?? "").Contains("sdxl", StringComparison.OrdinalIgnoreCase) ||
         (h.M("modelspec.architecture") ?? "").Contains("stable-diffusion-xl", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Palavras de ativação: as tags mais frequentes do treino (kohya ss_tag_frequency), no máximo 5.</summary>
+    /// <summary>
+    /// Palavras de ativação pelo cabeçalho: a frase declarada (modelspec) ou, no ss_tag_frequency do kohya, só tags curtas
+    /// (até 3 palavras) presentes em pelo menos 80% das imagens de uma pasta de treino. Legendas longas nunca viram gatilho
+    /// (medido: o Pixel Art XL traria "pixelbuildings128 a spider with red eyes" para todo prompt).
+    /// </summary>
     public static List<string> TriggersFrom(SafetensorsInfo h)
     {
         var res = new List<string>();
@@ -106,20 +110,21 @@ public static class ModelDetector
             try
             {
                 if (JsonNode.Parse(tf) is JsonObject dirs)
-                {
-                    var counts = new Dictionary<string, long>();
-                    foreach (var (_, d) in dirs)
-                        if (d is JsonObject tags)
-                            foreach (var (tag, c) in tags)
-                                counts[tag.Trim()] = counts.GetValueOrDefault(tag.Trim()) + (long)(c?.GetValue<double>() ?? 0);
-                    var top = counts.OrderByDescending(kv => kv.Value).Take(3).Select(kv => kv.Key).Where(t => t.Length is > 0 and < 60);
-                    // tag que aparece em quase todas as imagens = a palavra de ativação
-                    res.AddRange(top.Take(1));
-                }
+                    foreach (var (dir, d) in dirs)
+                    {
+                        if (d is not JsonObject tags) continue;
+                        // "10_ohwx woman": repetições + nome; o número de imagens é o da tag mais comum (aproximação segura)
+                        var counts = tags.Select(kv => (Tag: kv.Key.Trim(), N: kv.Value?.GetValue<double>() ?? 0)).ToList();
+                        if (counts.Count == 0) continue;
+                        var images = h.M("ss_num_train_images") is { } ni && double.TryParse(ni, out var nimg) && nimg > 0 ? nimg : counts.Max(c => c.N);
+                        foreach (var (tag, n) in counts.OrderByDescending(c => c.N))
+                            if (n >= 0.8 * images && tag.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 3 && tag.Length < 40 && tags.Count > 1)
+                                res.Add(tag);
+                    }
             }
             catch (Exception) { }
         }
-        return res.Distinct(StringComparer.OrdinalIgnoreCase).Take(5).ToList();
+        return res.Distinct(StringComparer.OrdinalIgnoreCase).Take(3).ToList();
     }
 }
 
@@ -281,7 +286,8 @@ public sealed class ImageLibrary : IDisposable
         {
             Id = id, Name = name.Length > 80 ? name[..80] : name, File = dst, Sha256 = sha, Size = size, Arch = det.Arch, Family = family,
             BaseModel = info?["baseModel"]?.GetValue<string>() ?? det.BaseModel,
-            Triggers = info?["triggers"] is JsonArray tw && tw.Count > 0 ? tw.Select(t => t!.GetValue<string>().Trim()).Where(t => t.Length > 0).Take(8).ToList() : det.Triggers,
+            // o Civitai é a fonte da verdade quando conhece o arquivo (lista vazia = o LoRA não precisa de palavra)
+            Triggers = info?["triggers"] is JsonArray tw ? tw.SelectMany(t => (t?.GetValue<string>() ?? "").Split(',')).Select(t => t.Trim()).Where(t => t.Length is > 0 and < 60).Distinct().Take(8).ToList() : det.Triggers,
             Source = info?["source"]?.GetValue<string>(), License = info?["license"]?.GetValue<string>(),
             Description = info?["description"]?.GetValue<string>(), Creator = info?["creator"]?.GetValue<string>(),
             Weight = info?["weight"]?.GetValue<double>() is double w and > 0 and <= 2 ? w : 0.8,

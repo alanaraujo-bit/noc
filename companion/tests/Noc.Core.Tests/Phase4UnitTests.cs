@@ -107,6 +107,17 @@ public class Phase4UnitTests
     }
 
     [Fact]
+    public void Long_training_captions_never_become_triggers()
+    {
+        var p = WriteSafetensors(new()
+        {
+            ["ss_base_model_version"] = "sdxl_base_v1-0", ["ss_num_train_images"] = "40",
+            ["ss_tag_frequency"] = "{\"1_px\": {\"pixelbuildings128 a spider with red eyes\": 1, \"pixel art\": 38, \"cat\": 3}}",
+        }, "lora_unet_input_blocks_4_1_proj_in.lora_down.weight", "lora_te2_text_model_encoder_layers_0_mlp_fc1.lora_up.weight");
+        Assert.Equal(["pixel art"], ModelDetector.Detect(SafetensorsInfo.Read(p)!, "x").Triggers);
+    }
+
+    [Fact]
     public void Detects_vpred_checkpoint_and_rejects_non_safetensors_garbage()
     {
         var p = WriteSafetensors([], "model.diffusion_model.input_blocks.0.0.weight", "conditioner.embedders.1.model.ln_final.weight", "v_pred", "ztsnr");
