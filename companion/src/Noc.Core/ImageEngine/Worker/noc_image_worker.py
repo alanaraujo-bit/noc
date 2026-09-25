@@ -478,6 +478,8 @@ class Runner:
         self.step_times = []
         self.phase = "generating"
         self.aux = []
+        # com o IP-Adapter carregado, a UNet exige a imagem de referência em TODA chamada (detalhes, refino...)
+        self.reference = None
 
     # -------------------------------------------------------------- progresso
 
@@ -535,6 +537,8 @@ class Runner:
 
     def gen(self, embeds, op, w, h, steps, guidance, seed, cb, init=None, mask=None, strength=None, control=None, reference=None):
         g = torch.Generator("cuda").manual_seed(seed)
+        if reference is None:
+            reference = self.reference
         with torch.inference_mode():
             if self.sdxl:
                 return self.eng.run(embeds, op, w, h, steps, guidance, g, cb, init=init, mask=mask, strength=strength,
@@ -700,6 +704,7 @@ class Runner:
             send("stage", id=job, stage="reference")
             eng.ensure_ip_adapter(ref_spec["ip"])
             reference = {"image": load_rgb(ref_spec["image"]), "scale": float(ref_spec.get("scale", 0.6))}
+            self.reference = reference
         control = None
         ctl_spec = c.get("control")
 
