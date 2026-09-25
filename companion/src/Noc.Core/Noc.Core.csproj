@@ -18,6 +18,8 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\bench-vision.png" LogicalName="bench-vision.png" />
+    <EmbeddedResource Include="ImageEngine\Worker\noc_image_worker.py" LogicalName="noc_image_worker.py" />
+    <EmbeddedResource Include="ImageEngine\Worker\requirements.txt" LogicalName="noc_image_requirements.txt" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Noc.Core.Tests" />

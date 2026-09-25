@@ -18,6 +18,7 @@ public interface ISessionHost
     Library.Benchmark Bench { get; }
     BlobStore Blobs { get; }
     Speech.SttService Stt { get; }
+    ImageEngine.ImageEngineService Images { get; }
     Storage.CompanionSettings Settings { get; }
     JsonArray LibraryJson();
     Diagnostics.DiagLog Diag { get; }

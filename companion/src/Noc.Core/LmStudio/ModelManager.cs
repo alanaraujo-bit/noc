@@ -46,6 +46,9 @@ public sealed class ModelManager
     /// <summary>O usuário descarregou de propósito: o pré-carregamento não deve recarregar sozinho.</summary>
     public bool UserUnloaded { get; private set; }
 
+    /// <summary>Chamado antes de qualquer carga de LLM (o motor de imagem libera a GPU).</summary>
+    public Func<CancellationToken, Task>? BeforeLoad { get; set; }
+
     /// <summary>Eventos de modelo para os celulares: {state, model, ...}.</summary>
     public event Action<JsonObject>? ModelEvent;
     public event Action? Changed;
@@ -163,6 +166,8 @@ public sealed class ModelManager
             SetOp(ModelOpState.Loading, key, prefs.LastLoadSeconds);
             try
             {
+                // o motor de imagem solta a GPU antes (um dono por vez; nada de medir VRAM com ele ocupando)
+                if (BeforeLoad is { } before) await before(ct);
                 // Mesmo modelo com outro contexto, ou política de um modelo por vez: descarrega antes de medir a VRAM.
                 foreach (var other in probe.Models.Where(m => m.Loaded && m.Type == "llm" && (_settings.SingleModel || m.Key == key)))
                     foreach (var inst in other.Instances)

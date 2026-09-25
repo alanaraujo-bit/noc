@@ -45,6 +45,9 @@ public sealed class ChatJob
     /// <summary>Resumo curto do pedido para a lista de atividades.</summary>
     public string? Label { get; init; }
     public bool Background { get; init; }
+    /// <summary>chat | image</summary>
+    public string Kind { get; init; } = "chat";
+    public bool IsImage => Kind == "image";
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.Now;
     public DateTimeOffset? StartedAt { get; private set; }
     public DateTimeOffset? FinishedAt { get; private set; }
@@ -141,6 +144,30 @@ public sealed class ChatJob
         Publish(e);
     }
 
+    /// <summary>Evento de progresso de uma tarefa de imagem (vai para o diário e para quem acompanha).</summary>
+    internal void Emit(JsonObject e)
+    {
+        LastActivity = DateTimeOffset.Now;
+        Publish(e);
+    }
+
+    /// <summary>
+    /// Evento efêmero (prévia da imagem): vai só para quem está acompanhando agora, sem número de sequência
+    /// e sem entrar no diário — perder uma prévia não faz falta, e ela não deve pesar na retomada.
+    /// </summary>
+    internal void EmitTransient(JsonObject e)
+    {
+        Action<JsonObject>[] subs;
+        lock (_lock) subs = [.. _subscribers];
+        e["job"] = Id;
+        e["transient"] = true;
+        LastActivity = DateTimeOffset.Now;
+        foreach (var s in subs)
+        {
+            try { s((JsonObject)e.DeepClone()); } catch { }
+        }
+    }
+
     /// <summary>Recomeça do zero (antes de sair conteúdo): o celular descarta o raciocínio parcial.</summary>
     internal void Reset(string why, bool bumpSeq = false)
     {
@@ -217,6 +244,7 @@ public sealed class ChatJob
             Request = doc["request"]?.DeepClone() as JsonObject, Meta = doc["meta"]?.DeepClone() as JsonObject,
             Label = doc["label"]?.GetValue<string>(), Images = doc["images"]?.GetValue<int>() ?? 0,
             Background = doc["background"]?.GetValue<bool>() ?? false,
+            Kind = doc["kind"]?.GetValue<string>() ?? "chat",
             CreatedAt = DateTimeOffset.FromUnixTimeMilliseconds(doc["createdAt"]?.GetValue<long>() ?? 0),
         };
         job.Attempts = doc["attempts"]?.GetValue<int>() ?? 0;
@@ -248,7 +276,7 @@ public sealed class ChatJob
     {
         ["v"] = 2, ["id"] = Id, ["model"] = Model, ["device"] = DeviceId, ["tier"] = Tier, ["context"] = ContextLength,
         ["request"] = IsFinished ? null : Request?.DeepClone(), ["meta"] = Meta?.DeepClone(), ["label"] = Label, ["images"] = Images,
-        ["background"] = Background, ["attempts"] = Attempts,
+        ["background"] = Background, ["attempts"] = Attempts, ["kind"] = Kind,
         ["createdAt"] = CreatedAt.ToUnixTimeMilliseconds(), ["startedAt"] = StartedAt?.ToUnixTimeMilliseconds(),
         ["finishedAt"] = FinishedAt?.ToUnixTimeMilliseconds(), ["events"] = Snapshot(),
     };
@@ -302,6 +330,17 @@ public sealed class JobManager : IDisposable
     {
         get => _paused;
         set { _paused = value; if (!value) Pump(); }
+    }
+
+    /// <summary>Motor de imagem (tarefas "image" passam por ele; o resto da fila é o mesmo).</summary>
+    public ImageEngine.ImageEngineService? Images { get; set; }
+
+    public static bool IsImageModel(string model) => model.StartsWith("image:", StringComparison.Ordinal);
+
+    /// <summary>Há tarefa de imagem na fila ou rodando.</summary>
+    public bool HasImageWork
+    {
+        get { lock (_lock) return _jobs.Values.Any(j => j.IsImage && !j.IsFinished); }
     }
 
     public event Action? Changed;
@@ -428,7 +467,8 @@ public sealed class JobManager : IDisposable
             }
             job.Attempts++;
             Trace?.Invoke($"tarefa {Short(job.Id)} recuperada do diário (estava {(wasRunning ? "gerando" : "na fila")}, {job.Content.Length} caracteres prontos)");
-            if (job.Content.Length == 0 && job.Tokens > 0) job.Reset("pc_restarted", bumpSeq: true);
+            if (job.IsImage) { /* recomeça com os mesmos parâmetros e seed; imagens já salvas não são refeitas */ }
+            else if (job.Content.Length == 0 && job.Tokens > 0) job.Reset("pc_restarted", bumpSeq: true);
             else if (wasRunning) job.Rebase("pc_restarted");
             Log?.Invoke(wasRunning ? "Retomando uma resposta interrompida pelo reinício do PC" : "Tarefa na fila restaurada após reinício", "task");
             job.SetPhase(JobState.Queued, "queued", new JsonObject { ["recovered"] = true });
@@ -473,6 +513,34 @@ public sealed class JobManager : IDisposable
         Pump();
         return (job, false);
     }
+
+    /// <summary>Enfileira uma tarefa de imagem (idempotente pelo id, como as de conversa).</summary>
+    public (ChatJob Job, bool Existing) StartImage(string id, string deviceId, ImageEngine.ImageRequest req, JsonObject? meta, string? label)
+    {
+        var existing = Get(id);
+        if (existing is not null) return (existing, true);
+        ChatJob job;
+        lock (_lock)
+        {
+            if (_jobs.TryGetValue(id, out var again)) return (again, true);
+            if (_queue.Count >= MaxQueued) throw new LmStudioException("busy", "A fila do seu PC está cheia. Tente de novo em instantes.");
+            job = new ChatJob
+            {
+                Id = id, Model = "image:" + req.Model, DeviceId = deviceId, Request = req.ToJson(), Meta = meta, Label = label, Kind = "image",
+            };
+            _jobs[id] = job;
+            _queue.Add(job);
+        }
+        SaveToDisk(job);
+        Log?.Invoke($"Pedido de imagem recebido ({NameOf(job)})", "task");
+        Trace?.Invoke($"tarefa de imagem {Short(id)} criada: modelo={req.Model} {req.Width}x{req.Height} passos={req.Steps} n={req.Count} aparelho={Short(deviceId)}");
+        Pump();
+        return (job, false);
+    }
+
+    /// <summary>Nome amigável do que a tarefa usa (modelo de conversa ou de imagem).</summary>
+    public string NameOf(ChatJob j) =>
+        j.IsImage ? ImageEngine.ImageCatalog.Find(j.Model[6..])?.Name ?? j.Model : _models.DisplayName(j.Model);
 
     public bool CancelQueued(ChatJob job)
     {
@@ -522,12 +590,14 @@ public sealed class JobManager : IDisposable
             _queue.AddRange(ordered);
             var running = _jobs.Values.Where(j => !j.IsFinished && j.State != JobState.Queued).ToList();
             var runningModel = running.FirstOrDefault()?.Model;
-            var slots = _paused ? 0 : MaxParallelSameModel - running.Count;
+            // a GPU é uma só: uma imagem roda sozinha (nada em paralelo com ela)
+            var slots = _paused ? 0 : runningModel is not null && IsImageModel(runningModel) ? 0 : MaxParallelSameModel - running.Count;
             foreach (var j in _queue.ToList())
             {
-                if (j.Background)
+                if (j.Background && !j.IsImage)
                 {
-                    var target = runningModel ?? loadedLlm;
+                    // tarefas de fundo usam o LLM que já está na GPU; nunca o modelo de imagem
+                    var target = runningModel is not null && !IsImageModel(runningModel) ? runningModel : loadedLlm;
                     if (target is not null && j.Model != target)
                     {
                         Trace?.Invoke($"tarefa de fundo {Short(j.Id)} usa {target} em vez de trocar de modelo");
@@ -537,10 +607,11 @@ public sealed class JobManager : IDisposable
                 if (slots <= 0) break;
                 // mesmo modelo que já está rodando (ou nada rodando): pode ir; outro modelo: espera a vez
                 if (runningModel is not null && j.Model != runningModel) break;
+                if (j.IsImage && running.Count + toStart.Count > 0) break;
                 runningModel = j.Model;
                 _queue.Remove(j);
                 toStart.Add(j);
-                slots--;
+                slots = j.IsImage ? 0 : slots - 1;
             }
             for (var i = 0; i < _queue.Count; i++)
             {
@@ -552,7 +623,7 @@ public sealed class JobManager : IDisposable
         {
             Trace?.Invoke($"tarefa {Short(j.Id)} começou após {(DateTimeOffset.Now - j.CreatedAt).TotalMilliseconds:0} ms na fila");
             j.SetPhase(JobState.Loading, "starting");
-            _ = Task.Run(() => RunAsync(j));
+            _ = Task.Run(() => j.IsImage ? RunImageAsync(j) : RunAsync(j));
         }
         Changed?.Invoke();
     }
@@ -706,6 +777,93 @@ public sealed class JobManager : IDisposable
         Pump();
     }
 
+    private static JobState StateForPhase(string phase) => phase switch
+    {
+        "prompt" => JobState.Preparing,
+        "generating" => JobState.Generating,
+        _ => JobState.Loading,
+    };
+
+    /// <summary>Uma tarefa de imagem: o motor de imagem faz o trabalho; aqui fica a parte comum (diário, fim, fila).</summary>
+    private async Task RunImageAsync(ChatJob job)
+    {
+        if (job.Cts.IsCancellationRequested && !job.CancelRequested) job.Cts = new CancellationTokenSource();
+        var ct = job.Cts.Token;
+        JsonObject end;
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            if (Images is null || !Images.Enabled) throw new JobFailure("image_off", "A geração de imagens está desligada no PC.");
+            var req = ImageEngine.ImageRequest.FromJson(job.Request!);
+            end = await Images.RunAsync(job, req,
+                (phase, extra) =>
+                {
+                    job.SetPhase(StateForPhase(phase), phase, extra ?? new JsonObject());
+                    job.LastActivity = DateTimeOffset.Now;
+                    SaveToDisk(job);
+                    Changed?.Invoke();
+                },
+                e => OnImageEvent(job, e), ct);
+        }
+        catch (OperationCanceledException) when (job.CancelRequested)
+        {
+            end = new JsonObject { ["reason"] = "cancelled" };
+        }
+        catch (JobFailure e)
+        {
+            end = new JsonObject { ["reason"] = "error", ["error"] = e.Code, ["detail"] = e.Message };
+        }
+        catch (Exception e)
+        {
+            Trace?.Invoke($"tarefa de imagem {Short(job.Id)} falhou: {e.GetType().Name} {e.Message}");
+            end = new JsonObject { ["reason"] = "error", ["error"] = "internal", ["detail"] = "A geração da imagem falhou no PC. Tente de novo." };
+        }
+        if (_disposed) return;
+        if (job.CancelRequested && end["reason"]?.GetValue<string>() == "error") end = new JsonObject { ["reason"] = "cancelled" };
+        end["model"] ??= job.Model[6..];
+        end["name"] ??= NameOf(job);
+        end["kind"] = "image";
+        if (end["stats"] is not JsonObject stats) end["stats"] = stats = new JsonObject();
+        stats["wallMs"] ??= sw.ElapsedMilliseconds;
+        stats["queuedMs"] ??= (long)((job.StartedAt ?? DateTimeOffset.Now) - job.CreatedAt).TotalMilliseconds;
+        job.Finish(end);
+        SaveToDisk(job);
+        var reason = end["reason"]!.GetValue<string>();
+        Trace?.Invoke($"tarefa de imagem {Short(job.Id)} terminou: {reason}{(end["error"] is { } er ? "/" + er : "")} em {sw.ElapsedMilliseconds} ms");
+        if (reason != "stop") Log?.Invoke(reason == "cancelled" ? "Geração de imagem cancelada" : $"Imagem falhou: {end["detail"]}", reason == "error" ? "error" : "task");
+        Changed?.Invoke();
+        Pump();
+    }
+
+    private void OnImageEvent(ChatJob job, JsonObject e)
+    {
+        var ev = e["ev"]?.GetValue<string>();
+        switch (ev)
+        {
+            case "progress":
+            {
+                if (job.Phase != "generating") job.SetPhase(JobState.Generating, "generating");
+                if (e["preview"] is JsonValue pv)
+                    job.EmitTransient(new JsonObject { ["preview"] = pv.GetValue<string>(), ["image"] = e["image"]?.DeepClone(), ["step"] = e["step"]?.DeepClone() });
+                job.Emit(new JsonObject
+                {
+                    ["step"] = e["step"]?.DeepClone(), ["steps"] = e["steps"]?.DeepClone(), ["image"] = e["image"]?.DeepClone(), ["count"] = e["count"]?.DeepClone(),
+                });
+                break;
+            }
+            case "stage":
+                job.Emit(new JsonObject { ["stage"] = e["stage"]?.DeepClone(), ["image"] = e["image"]?.DeepClone(), ["count"] = e["count"]?.DeepClone() });
+                break;
+            case null when e["imageReady"] is JsonObject:
+                job.Emit((JsonObject)e.DeepClone());
+                SaveToDisk(job);
+                break;
+            case null when e["kind"]?.GetValue<string>() == "load":
+                job.Emit(new JsonObject { ["loadStage"] = e["stage"]?.DeepClone(), ["progress"] = e["progress"]?.DeepClone() });
+                break;
+        }
+    }
+
     /// <summary>Espera o LM Studio voltar e recoloca a tarefa na frente da fila (ela continua do ponto).</summary>
     private async Task<bool> TryRecoverAsync(ChatJob job, LmStudioException e)
     {
@@ -794,7 +952,7 @@ public sealed class JobManager : IDisposable
 
     public JsonObject Describe(ChatJob j, string? forDevice = null) => new()
     {
-        ["job"] = j.Id, ["model"] = j.Model, ["name"] = _models.DisplayName(j.Model), ["tier"] = j.Tier,
+        ["job"] = j.Id, ["model"] = j.Model, ["name"] = NameOf(j), ["tier"] = j.Tier, ["kind"] = j.Kind,
         ["state"] = j.State.ToString().ToLowerInvariant(), ["phase"] = j.IsFinished ? "done" : j.Phase,
         ["position"] = j.State == JobState.Queued ? QueuePosition(j) : null,
         ["createdAt"] = j.CreatedAt.ToUnixTimeMilliseconds(), ["startedAt"] = j.StartedAt?.ToUnixTimeMilliseconds(),

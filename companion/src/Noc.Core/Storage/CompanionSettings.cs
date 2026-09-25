@@ -32,6 +32,14 @@ public sealed class CompanionSettings
     public bool AllowComponentDownloads { get; set; } = true;
     /// <summary>Religa o servidor do LM Studio sozinho se ele cair.</summary>
     public bool KeepLmServerAlive { get; set; } = true;
+    /// <summary>Geração de imagens local (Z-Image Turbo / FLUX.1 Dev).</summary>
+    public bool ImageEnabled { get; set; } = true;
+    /// <summary>Pasta única do motor de imagem (runtime, modelos, cache, imagens). Escolhida uma vez: o disco local com mais espaço.</summary>
+    public string? ImageEngineRoot { get; set; }
+    /// <summary>Quanto tempo o modelo de imagem fica aquecido depois da última imagem quando a GPU estava livre.</summary>
+    public int ImageKeepWarmMinutes { get; set; } = 10;
+    /// <summary>Com um modelo de conversa esperando para voltar, o motor de imagem libera a GPU mais cedo.</summary>
+    public int ImageKeepWarmWithLlmSeconds { get; set; } = 90;
 
     private static readonly JsonSerializerOptions Json = new()
     {
