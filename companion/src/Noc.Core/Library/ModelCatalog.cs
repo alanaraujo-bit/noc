@@ -112,6 +112,8 @@ public sealed class ModelPrefs
     public DateTimeOffset? LastErrorAt { get; set; }
     public JsonObject? Benchmark { get; set; }
     public bool? MtpWorks { get; set; }
+    /// <summary>Quanto o modelo realmente ocupou da VRAM em relação à estimativa do LM Studio (medido ao carregar).</summary>
+    public double? VramFactor { get; set; }
 }
 
 public sealed class CatalogData
@@ -212,9 +214,11 @@ public sealed class ModelCatalog
                 var budget = vramGiB > 0 ? vramGiB * 0.92 : double.MaxValue;
                 var fit = llms.Where(m => m.SizeBytes / 1073741824.0 < budget).ToList();
                 if (fit.Count == 0) fit = llms;
-                // um arquivo por modelo: prefere a quantização maior que ainda cabe
+                // um arquivo por modelo: prefere a quantização maior que ainda cabe. Sem saber a VRAM (logo ao ligar,
+                // antes da primeira leitura da GPU, ou GPU sem nvidia-smi), fica com a mais leve: um Q8 que não cabe
+                // na GPU é dezenas de vezes mais lento. Quando a leitura chega, a distribuição é refeita.
                 var byFamily = fit.GroupBy(m => ModelNames.Friendly(m.DisplayName, m.Params, null))
-                    .Select(g => g.OrderByDescending(m => m.SizeBytes).First()).ToList();
+                    .Select(g => vramGiB > 0 ? g.OrderByDescending(m => m.SizeBytes).First() : g.OrderBy(m => m.SizeBytes).First()).ToList();
                 var ordered = byFamily.OrderBy(m => ModelNames.ParamsB(m.Params) ?? m.SizeBytes / 1e9).ToList();
                 var fast = ordered.First();
                 var deep = ordered.Last();
@@ -273,6 +277,17 @@ public sealed class ModelCatalog
 
     private static readonly SemaphoreSlim EstimateGate = new(1, 1);
 
+    /// <summary>
+    /// Estimativa corrigida pelo que o modelo de fato ocupou na última carga: o "lms --estimate-only" costuma errar
+    /// para mais (quase 2 GiB num 27B), o que tirava contexto à toa. A margem de segurança continua valendo.
+    /// </summary>
+    public async Task<double?> PlannedGiBAsync(LmModel m, int context, CancellationToken ct)
+    {
+        var est = await EstimateAsync(m, context, ct);
+        var f = Prefs(m.Key).VramFactor;
+        return est is { } e && f is { } k ? Math.Round(e * Math.Clamp(k, 0.8, 1.25), 2) : est;
+    }
+
     /// <summary>VRAM (GiB) que o LM Studio estima para o modelo com este contexto. Cacheado em disco.</summary>
     public async Task<double?> EstimateAsync(LmModel m, int context, CancellationToken ct)
     {
@@ -312,7 +327,11 @@ public sealed class ModelCatalog
 }
 
 /// <summary>Configuração de carga escolhida para um modelo.</summary>
-public sealed record LoadPlan(int Context, int Parallel, bool? Mtp, double? EstimateGiB, double? BudgetGiB, bool Fits, string? Note);
+public sealed record LoadPlan(int Context, int Parallel, bool? Mtp, double? EstimateGiB, double? BudgetGiB, bool Fits, string? Note)
+{
+    /// <summary>VRAM ocupada por outras coisas no momento do plano (para medir o quanto o modelo ocupou de verdade).</summary>
+    public double? OtherGiB { get; init; }
+}
 
 /// <summary>
 /// Escolhe o maior contexto (até o alvo do perfil) cuja estimativa cabe na VRAM livre, com margem de segurança.
@@ -336,7 +355,7 @@ public static class LoadPlanner
         if (want is { } fixedCtx)
         {
             fixedCtx = Math.Clamp(fixedCtx, 2048, maxCtx);
-            var est = await catalog.EstimateAsync(model, fixedCtx, ct);
+            var est = await catalog.PlannedGiBAsync(model, fixedCtx, ct);
             var fits = budget is null || est is null || est <= budget;
             return new LoadPlan(fixedCtx, parallel, mtp, est, budget, fits, fits ? null : "O contexto escolhido não cabe inteiro na GPU");
         }
@@ -345,7 +364,7 @@ public static class LoadPlanner
         double? lastEst = null;
         foreach (var ctx in Ladder.Where(c => c <= target))
         {
-            var est = await catalog.EstimateAsync(model, ctx, ct);
+            var est = await catalog.PlannedGiBAsync(model, ctx, ct);
             lastEst = est;
             if (budget is null || est is null || est <= budget)
                 return new LoadPlan(ctx, parallel, mtp, est, budget, true, ctx < target ? $"Contexto reduzido para caber na GPU" : null);

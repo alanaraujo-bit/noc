@@ -94,7 +94,25 @@ Os deltas são agrupados a cada ~40 ms.
 
 O evento final tem `"end":{"reason":"stop|length|cancelled|error","usage":{...},"stats":{...}}`.
 `chat.subscribe {job, from}` reenvia do buffer todos os eventos com `seq > from` e continua ao vivo.
-O Companion guarda os jobs por 30 min depois do fim.
+O Companion guarda os jobs (cifrados com DPAPI em disco, para sobreviver a um reinício do PC) por 24 h depois do fim.
+
+### Extensões da versão 1.1
+
+O `welcome` traz `pc.features`; o app só usa o que o PC anuncia:
+
+| Recurso | Métodos | O que faz |
+|---|---|---|
+| `tiers` | `tiers.set`, `models.default`, `models.update`, `models.plan` | Perfis Rápido/Inteligente/Profundo (`chat.start` aceita `"model":"tier:fast"`), modelo padrão, apelido/favorito/contexto por modelo, plano de carga pela VRAM. |
+| `blobs` | `blob.has`, `blob.put` | Imagens enviadas uma vez, por SHA-256, em pedaços; a mensagem referencia `{"type":"image_ref","hash":…,"mime":…}`. |
+| `stt` | `stt.status`, `stt.prepare`, `stt.begin`, `stt.chunk`, `stt.end`, `stt.cancel` | Ditado: PCM 16 kHz mono em pedaços durante a fala; `stt.end` devolve o texto. |
+| `jobs2` | `jobs.list`, `jobs.get`, `jobs.prioritize` | Fila com fases, posição, prioridade e tarefas de fundo (`"background":true`, nunca trocam o modelo carregado). |
+| `bench` | `models.bench` | Teste de desempenho real (TTFT, tok/s, carga, prefill, visão). |
+| `library` | `models.library`, `models.scan` | Importação automática de GGUF da pasta Downloads. |
+
+O evento `job` ganha `phase` (`queued` com `ahead`, `starting`, `loading` com `expectedSeconds`, `preparing`,
+`thinking`, `generating`, `recovering`, `waiting_lm`) e `reset` (`{"reset":true,"why":…,"r":…,"c":"<texto completo até aqui>"}`): depois de
+uma recuperação o Companion salta a sequência (+10000) e reenvia o retrato completo, e o app substitui em vez de
+anexar. O `end` traz `model`, `name` e `stats` (`wallMs`, `queuedMs`, tok/s, TTFT).
 
 ## 4. Relay
 

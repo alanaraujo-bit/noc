@@ -1,6 +1,7 @@
 package com.noc.app.service
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -68,6 +70,15 @@ class Notifier(
         }
         val duration = stats?.wallMs ?: stats?.totalMs
         val sub = listOfNotNull(conv?.title, duration?.takeIf { status == MessageStatus.DONE && it > 15_000 }?.let { "em " + Texts.seconds(it) }).joinToString(" · ")
+        val notice = if (status == MessageStatus.DONE) "Sua resposta está pronta." else "Uma resposta precisa da sua atenção."
+        // "Só o aviso" com o celular bloqueado: o Android só esconde o conteúdo de notificações privadas
+        // se o usuário escolheu isso no sistema, então o Noc nem coloca o conteúdo
+        if (p.lockPrivacy == LockPrivacy.NOTICE && locked()) {
+            val g = generic(notice, openIntent(msg.conversationId, msg.id), foreground)
+            nm.notify(idFor(msg.id), g)
+            updateSummary(p.lockPrivacy)
+            return@withContext
+        }
         val b = NotificationCompat.Builder(context, CH_REPLIES)
             .setSmallIcon(R.drawable.ic_stat_noc)
             .setColor(0xFFC45A1A.toInt())
@@ -81,16 +92,48 @@ class Notifier(
             .setContentIntent(openIntent(msg.conversationId, msg.id))
         // no app, em outra conversa: aviso discreto (sem som)
         if (foreground) b.setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW)
-        applyPrivacy(b, p.lockPrivacy, "Sua resposta está pronta.")
+        applyPrivacy(b, p.lockPrivacy, notice)
+        if (p.lockPrivacy == LockPrivacy.NOTICE) b.addExtras(Bundle().apply { putString(EXTRA_NOTICE, notice) })
         when (status) {
             MessageStatus.DONE -> if (content.isNotBlank()) b.addAction(0, "Copiar", actionIntent(TaskActionReceiver.COPY, msg.id))
             MessageStatus.ERROR, MessageStatus.INTERRUPTED -> b.addAction(0, "Tentar de novo", actionIntent(TaskActionReceiver.RETRY, msg.id))
         }
         nm.notify(idFor(msg.id), b.build())
-        updateSummary()
+        updateSummary(p.lockPrivacy)
     }
 
-    private fun updateSummary() {
+    private fun locked() = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
+
+    private fun generic(text: String, open: PendingIntent?, silent: Boolean): Notification =
+        NotificationCompat.Builder(context, CH_REPLIES)
+            .setSmallIcon(R.drawable.ic_stat_noc)
+            .setColor(0xFFC45A1A.toInt())
+            .setContentTitle("Noc")
+            .setContentText(text)
+            .setAutoCancel(true)
+            .setGroup(GROUP_REPLIES)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setContentIntent(open)
+            .setOnlyAlertOnce(true)
+            .setSilent(silent)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+
+    /**
+     * A tela apagou (vai bloquear): no modo "Só o aviso", as respostas avisadas com o celular em uso
+     * trocam o conteúdo pelo aviso genérico, sem tocar de novo. Chamado pelo receptor de tela apagada.
+     */
+    fun redactForLock(privacy: LockPrivacy) {
+        if (privacy != LockPrivacy.NOTICE) return
+        runCatching {
+            nm.activeNotifications.forEach { sbn ->
+                val notice = sbn.notification.extras.getString(EXTRA_NOTICE) ?: return@forEach
+                nm.notify(sbn.tag, sbn.id, generic(notice, sbn.notification.contentIntent, silent = true))
+            }
+        }
+    }
+
+    private fun updateSummary(privacy: LockPrivacy) {
         val active = nm.activeNotifications.count { it.notification.group == GROUP_REPLIES && it.id != ID_SUMMARY }
         if (active < 2) return
         val s = NotificationCompat.Builder(context, CH_REPLIES)
@@ -102,6 +145,7 @@ class Notifier(
             .setAutoCancel(true)
             .setSilent(true)
             .setContentIntent(openIntent(null, null))
+            .setVisibility(if (privacy == LockPrivacy.HIDDEN) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PUBLIC)
             .build()
         nm.notify(ID_SUMMARY, s)
     }
@@ -221,6 +265,8 @@ class Notifier(
 
     companion object {
         const val CH_REPLIES = "replies"
+        /** Marca as respostas que devem virar só o aviso quando a tela bloquear (modo "Só o aviso"). */
+        private const val EXTRA_NOTICE = "noc.notice"
         const val CH_TASKS = "generation"
         const val CH_PC = "pc"
         private const val GROUP_REPLIES = "noc.replies"

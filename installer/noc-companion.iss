@@ -2,7 +2,7 @@
 ; Compilar: ISCC.exe installer\noc-companion.iss   (antes: dotnet publish → dist\companion\Noc.exe)
 
 #define AppName "Noc Companion"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppExe "Noc.exe"
 #define FirewallRule "Noc Companion"
 
@@ -66,6 +66,8 @@ Name: "desktopicon"; Description: "{cm:TaskDesktop}"; GroupDescription: "{cm:Tas
 
 [Files]
 Source: "..\dist\companion\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
+; transcrição de voz (Whisper): bibliotecas nativas ao lado do exe
+Source: "..\dist\companion\runtimes\*"; DestDir: "{app}\runtimes"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\Noc Companion"; Filename: "{app}\{#AppExe}"; Comment: "Acesso seguro às suas IAs locais pelo celular"

@@ -1,8 +1,10 @@
 using Noc.Core.Library;
 using Noc.Core.Speech;
+using Noc.Core.Storage;
 
 namespace Noc.Core.Tests;
 
+[Collection("e2e")] // um teste troca AppPaths.Root (estático)
 public class LibraryTests
 {
     [Theory]
@@ -89,5 +91,61 @@ public class LibraryTests
         Assert.Equal("Configura o MikroTik", SttService.ApplyVocab("Configura o Mikrotik", vocab));
         // palavras comuns (minúsculas) não são tocadas
         Assert.Equal("uma pequena questão", SttService.ApplyVocab("uma pequena questão", vocab));
+    }
+
+    [Fact]
+    public async Task Planner_uses_measured_vram_instead_of_pessimistic_estimate()
+    {
+        // números reais deste PC: Qwen 3.8 27B Q4_K_M, RTX 3090 Ti, ~2,6 GiB ocupados pelo resto do sistema
+        var catalog = new ModelCatalog();
+        var model = new Noc.Core.LmStudio.LmModel("teste-planner-" + Guid.NewGuid().ToString("N")[..6], "Teste", "llm", "qwen35",
+            "Q4_K_M", 16_000_000_000, "27B", 262144, false, false, [], null, []);
+        var est = new Dictionary<int, double> { [65536] = 22.9, [49152] = 21.96, [32768] = 21.02, [24576] = 20.09, [16384] = 19.6, [12288] = 19.4, [8192] = 19.1, [4096] = 18.9 };
+        foreach (var (ctx, gib) in est) catalog.Data.Estimates[$"{model.Key}|{model.SizeBytes}|{ctx}"] = gib;
+
+        var before = await LoadPlanner.PlanAsync(catalog, model, Tiers.Deep, null, 23.99, 2.6, 0, CancellationToken.None);
+        Assert.Equal(24576, before.Context);
+
+        // carregado com 24k ocupou 18,3 GiB (a estimativa dizia 20,09): o próximo plano usa o real + margem
+        catalog.Prefs(model.Key).VramFactor = Math.Round(18.3 / 20.09 + 0.02, 3);
+        var after = await LoadPlanner.PlanAsync(catalog, model, Tiers.Deep, null, 23.99, 2.6, 0, CancellationToken.None);
+        Assert.True(after.Context >= 32768);
+        Assert.True(after.EstimateGiB + LoadPlanner.SafetyGiB <= 23.99 - 2.6);
+
+        // fator absurdo (medida ruim) não deixa o plano passar do que cabe
+        catalog.Prefs(model.Key).VramFactor = 0.1;
+        var clamped = await LoadPlanner.PlanAsync(catalog, model, Tiers.Deep, null, 23.99, 2.6, 0, CancellationToken.None);
+        Assert.True(clamped.EstimateGiB >= 0.8 * est[clamped.Context] - 0.01);
+    }
+
+    [Fact]
+    public void Profiles_never_pick_a_quant_that_may_not_fit_while_vram_is_unknown()
+    {
+        AppPaths.Root = Path.Combine(Path.GetTempPath(), "noc-catalog-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(AppPaths.Root);
+        static Noc.Core.LmStudio.LmModel M(string key, string name, string p, double gb, bool vision = false) =>
+            new(key, name, "llm", "x", null, (long)(gb * 1073741824), p, 32768, vision, false, [], null, []);
+        var models = new[]
+        {
+            M("qwen3.5-9b", "Qwen3.5 9B Abliterated Vision", "9B", 5.6, vision: true),
+            M("gemma4-26b-a4b", "Gemma4 26B A4B", "26B", 16.1, vision: true),
+            M("qwen3.8-27b@q4_k_m", "Qwen3.8 27B Uncensored", "27B", 15.9),
+            M("qwen3.8-27b@q8_0", "Qwen3.8 27B Uncensored", "27B", 27.0),
+        };
+        var catalog = new ModelCatalog();
+
+        // logo ao ligar (GPU ainda não lida): a quantização mais leve
+        catalog.AutoAssign(models, 0);
+        Assert.Equal("qwen3.8-27b@q4_k_m", catalog.ModelForTier(Tiers.Deep));
+        Assert.Equal("qwen3.5-9b", catalog.ModelForTier(Tiers.Fast));
+        Assert.Equal("gemma4-26b-a4b", catalog.ModelForTier(Tiers.Smart));
+
+        // 24 GB: o Q8 (27 GiB) não cabe
+        catalog.AutoAssign(models, 24);
+        Assert.Equal("qwen3.8-27b@q4_k_m", catalog.ModelForTier(Tiers.Deep));
+
+        // 48 GB: agora a melhor quantização cabe
+        catalog.AutoAssign(models, 48);
+        Assert.Equal("qwen3.8-27b@q8_0", catalog.ModelForTier(Tiers.Deep));
     }
 }

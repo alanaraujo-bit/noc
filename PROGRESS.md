@@ -171,3 +171,30 @@
 - E (tarefa longa, Profundo 27B): 268 s com a tela bloqueada, "Qwen 3.8 27B terminou · em 268 s" ✔
 - Benchmark real (Companion): Qwen 3.5 9B 106,2 tok/s, 1º token 89 ms, carga 7,5 s, leitura 3645 tok/s (7272 tokens), visão ok.
 - Companion (janela): página Modelos, voz na visão geral, novos ajustes. Diagnóstico do celular: perfis, visão, voz, notificações.
+
+## Fase 2 — Release 1.1.0 (2026-09-25)
+Testes com o APK de release (R8, com.noc.app 1.1.0) pareado ao Companion 1.1.0 instalado pelo instalador:
+- Atualização 1.0.0 → 1.1.0 por cima: conversas intactas (migração Room v1→v2) ✔
+- Imagem pelo relay, ditado (silêncio → "Ditado transcrito"), processo morto → WorkManager notificou "Qwen 3.5 9B terminou" ✔
+- Câmera (câmera virtual do emulador) → foto anexada (39 KB) ✔
+- Duas imagens numa mensagem (foto + print): "Imagem 1… Imagem 2… link down na porta 7" ✔
+- Compartilhar do app Arquivos → Noc: imagem chega anexada; com o Profundo (sem visão) aparece "Usar Qwen 3.5 9B"; resposta certa ✔
+- Privacidade na tela bloqueada com PIN — BUG REAL corrigido: em "Só o aviso", a tela bloqueada mostrava modelo, título e trecho.
+  Causa: VISIBILITY_PRIVATE só é respeitada quando o usuário escolheu "ocultar conteúdo sensível" no Android (o padrão é mostrar tudo),
+  e o Android 14 ignora a visibilidade de canal definida pelo app (testado: mLockscreenVisibility=-1000). Correção: com o celular
+  bloqueado a notificação já nasce genérica ("Noc · Sua resposta está pronta."); com o celular em uso ela é completa e, quando a tela
+  apaga, é trocada pela genérica sem tocar de novo (receptor de SCREEN_OFF). Testado: bloqueado ✔, em uso → tela apagada ✔,
+  "Ocultar" não mostra nada ✔. Padrão continua "Completo".
+- Contexto do Profundo — melhoria: a estimativa do `lms --estimate-only` erra para mais (27B: 20,09 GiB estimados, 18,3 reais) e a
+  espera pela VRAM do modelo anterior parava na primeira queda de 1 GB, contando o resto como "ocupado" → Profundo carregava com 24k.
+  Agora a espera vai até a VRAM parar de cair e cada carga mede o uso real e guarda o fator (real/estimado, +2%, só entre 0,8 e 1,3;
+  fora disso a medida é descartada). Resultado real: 9B fator 0,888; 27B 32k → medido 18,81 GiB → próxima carga 48k (19,91 GiB,
+  22,35 de 24 GiB no total, tudo na GPU, TTFT 578 ms). Teste unitário do planejador com os números reais.
+- BUG REAL no empacotamento corrigido: publicar sem `-p:IncludeNativeLibrariesForSelfExtract=true` (o comando do README) deixava as
+  DLLs nativas do WPF fora do Noc.exe, e o instalador só copia o exe → o Companion instalado fechava ao abrir (DllNotFoundException).
+  A propriedade agora está no .csproj; publicação feita em pasta limpa; reinstalado e conferido (voz pronta, modelo pré-carregado).
+- BUG REAL (achado pela suíte E2E completa) corrigido: logo ao ligar, antes da primeira leitura da GPU, a distribuição automática
+  dos perfis tratava a VRAM como infinita e punha o Q8_0 do 27B (29 GB) no Profundo; num PC sem nvidia-smi ficaria assim para sempre.
+  Agora, sem saber a VRAM, cada modelo fica com a quantização mais leve, e a leitura da GPU refaz a distribuição. Teste unitário
+  (VRAM desconhecida → Q4; 24 GB → Q4; 48 GB → Q8).
+- Testes: Companion 46/46 (unitários + E2E com LM Studio e relay reais), Android 17/17 unitários.

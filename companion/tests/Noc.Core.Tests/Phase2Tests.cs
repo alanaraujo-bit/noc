@@ -40,8 +40,8 @@ public class Phase2Tests(ITestOutputHelper log)
             await using var pair = await TestClient.ConnectAsync(url, HandshakeMode.PairQr, th => TestClient.PairAuth(th, device, offer.PairingId, offer.Secret));
         }
         var c = await TestClient.ConnectAsync(url, HandshakeMode.Session, th => TestClient.SessionAuth(th, device));
-        // espera o catálogo montar os perfis (precisa da leitura da GPU)
-        for (var i = 0; i < 40 && host.Catalog.ModelForTier(Tiers.Deep) is null; i++) await Task.Delay(250);
+        // espera o catálogo montar os perfis e a primeira leitura da GPU (sem ela, "cabe na GPU" fica desconhecido)
+        for (var i = 0; i < 60 && (host.Catalog.ModelForTier(Tiers.Deep) is null || host.Gpu.Last is null); i++) await Task.Delay(250);
         return new Paired(host, c, device, url);
     }
 

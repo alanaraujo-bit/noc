@@ -113,7 +113,7 @@ public sealed class ModelManager
         double loadedEst = 0;
         foreach (var m in _last.Models.Where(m => m.Loaded))
             foreach (var inst in m.Instances)
-                loadedEst += await _catalog.EstimateAsync(m, inst.ContextLength, ct) ?? m.SizeBytes / 1073741824.0;
+                loadedEst += await _catalog.PlannedGiBAsync(m, inst.ContextLength, ct) ?? m.SizeBytes / 1073741824.0;
         var used = g.VramUsedMb / 1024.0;
         return (g.VramTotalMb / 1024.0, Math.Max(0.3, used - loadedEst));
     }
@@ -126,9 +126,9 @@ public sealed class ModelManager
             // os outros continuam carregados: contam como ocupados
             foreach (var m in _last.Models.Where(m => m.Loaded && m.Key != model.Key))
                 foreach (var inst in m.Instances)
-                    other += await _catalog.EstimateAsync(m, inst.ContextLength, ct) ?? m.SizeBytes / 1073741824.0;
+                    other += await _catalog.PlannedGiBAsync(m, inst.ContextLength, ct) ?? m.SizeBytes / 1073741824.0;
         }
-        var plan = await LoadPlanner.PlanAsync(_catalog, model, tier, forcedContext, total, other, _reserveGiB(), ct);
+        var plan = await LoadPlanner.PlanAsync(_catalog, model, tier, forcedContext, total, other, _reserveGiB(), ct) with { OtherGiB = total > 0 ? other : null };
         if (plan.Mtp is null)
         {
             var header = await HeaderOfAsync(model.Key, ct);
@@ -173,12 +173,16 @@ public sealed class ModelManager
                 if (probe.Models.Any(m => m.Loaded && m.Type == "llm" && (_settings.SingleModel || m.Key == key)))
                 {
                     // a VRAM demora um instante para ser liberada: espera ela baixar antes de medir
+                    // (até parar de cair, senão o que ainda está sendo devolvido conta como "ocupado" e o plano perde contexto)
                     var before = _gpu.Last?.VramUsedMb ?? 0;
-                    for (var i = 0; i < 16; i++)
+                    var prev = before;
+                    for (var i = 0; i < 24; i++)
                     {
                         await Task.Delay(250, ct);
                         var now = await Task.Run(_gpu.SampleNow, ct);
-                        if (now is null || before - now.VramUsedMb > 1024) break;
+                        if (now is null) break;
+                        if (before - now.VramUsedMb > 1024 && prev - now.VramUsedMb < 64) break;
+                        prev = now.VramUsedMb;
                     }
                     await Task.Delay(300, ct);
                 }
@@ -200,6 +204,7 @@ public sealed class ModelManager
                         prefs.LastLoadSeconds = Math.Round(seconds, 1);
                         prefs.LastError = null;
                         if (mtp == true) prefs.MtpWorks = true;
+                        await CalibrateAsync(model, prefs, plan.OtherGiB, effective, ct);
                         _catalog.Save();
                         UserUnloaded = false;
                         await RefreshAsync(ct);
@@ -246,6 +251,31 @@ public sealed class ModelManager
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Mede quanto o modelo recém-carregado ocupou de fato e guarda a proporção em relação à estimativa,
+    /// para as próximas cargas escolherem o contexto pelo uso real (com a mesma margem de segurança).
+    /// </summary>
+    private async Task CalibrateAsync(LmModel model, ModelPrefs prefs, double? otherGiB, int context, CancellationToken ct)
+    {
+        if (otherGiB is not { } other || context <= 0) return;
+        try
+        {
+            await Task.Delay(1500, ct); // o runtime termina de reservar os buffers logo depois de responder
+            var g = await Task.Run(_gpu.SampleNow, ct);
+            var est = await _catalog.EstimateAsync(model, context, ct);
+            if (g is null || est is not { } e || e < 1) return;
+            var used = g.VramUsedMb / 1024.0 - other;
+            // fora dessa faixa a medida não é confiável (ex.: parte do modelo foi parar na memória compartilhada)
+            var ratio = used / e;
+            if (ratio is < 0.8 or > 1.3) return;
+            // um pouco acima do medido: o resto do PC também oscila
+            var factor = Math.Round(Math.Min(ratio + 0.02, 1.25), 3);
+            prefs.VramFactor = factor;
+            RawLog?.Invoke($"VRAM de {model.Key} com {context} de contexto: {used:0.00} GiB (estimativa {e:0.00} GiB, fator {factor:0.000})");
+        }
+        catch (Exception e) when (e is not OperationCanceledException) { }
     }
 
     public async Task UnloadAsync(string key, CancellationToken ct, bool byUser = true)
