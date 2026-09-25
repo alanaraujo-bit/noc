@@ -185,6 +185,9 @@ Testes com o APK de release (R8, com.noc.app 1.1.0) pareado ao Companion 1.1.0 i
   bloqueado a notificação já nasce genérica ("Noc · Sua resposta está pronta."); com o celular em uso ela é completa e, quando a tela
   apaga, é trocada pela genérica sem tocar de novo (receptor de SCREEN_OFF). Testado: bloqueado ✔, em uso → tela apagada ✔,
   "Ocultar" não mostra nada ✔. Padrão continua "Completo".
+  Caso a mais (celular real trava alguns segundos DEPOIS de apagar a tela, sem novo SCREEN_OFF): tela apagada conta como bloqueada.
+  Testado com trava 30 s após apagar e botão liga/desliga sem travar na hora: resposta terminou 4 s após apagar → só "Noc · Sua
+  resposta está pronta." na tela bloqueada ✔; tocar abre a conversa na resposta ✔.
 - Contexto do Profundo — melhoria: a estimativa do `lms --estimate-only` erra para mais (27B: 20,09 GiB estimados, 18,3 reais) e a
   espera pela VRAM do modelo anterior parava na primeira queda de 1 GB, contando o resto como "ocupado" → Profundo carregava com 24k.
   Agora a espera vai até a VRAM parar de cair e cada carga mede o uso real e guarda o fator (real/estimado, +2%, só entre 0,8 e 1,3;

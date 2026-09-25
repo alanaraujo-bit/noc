@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -102,7 +103,9 @@ class Notifier(
         updateSummary(p.lockPrivacy)
     }
 
-    private fun locked() = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
+    // tela apagada conta como bloqueada: o Android costuma travar alguns segundos depois de apagar, sem novo SCREEN_OFF
+    private fun locked() = !context.getSystemService(PowerManager::class.java).isInteractive ||
+        context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
 
     private fun generic(text: String, open: PendingIntent?, silent: Boolean): Notification =
         NotificationCompat.Builder(context, CH_REPLIES)
