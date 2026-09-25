@@ -137,7 +137,7 @@ class ChatViewModel(
 
     private suspend fun ensureConversation(): String {
         convId.value?.let { return it }
-        val id = engine.newConversation(presetId = pendingPreset.value, model = pendingModel.value ?: config.value?.model)
+        val id = engine.newConversation(presetId = pendingPreset.value, model = pendingModel.value ?: config.value?.choice)
         if (pendingParams.value != null || pendingSystem.value != null) {
             db.conversations().setConfig(id, pendingPreset.value, pendingSystem.value, pendingParams.value?.encode())
         }
@@ -168,10 +168,20 @@ class ChatViewModel(
 
     // ------------------------------------------------------------------ configuração
 
-    fun setModel(key: String) = viewModelScope.launch {
+    /** Troca de modelo/perfil ("tier:fast" ou chave). Vale para as próximas respostas; a conversa continua igual. */
+    fun setModel(choice: String) = viewModelScope.launch {
+        val before = config.value?.choice
         val id = convId.value
-        if (id == null) pendingModel.value = key else db.conversations().setModel(id, key)
+        if (id == null) pendingModel.value = choice else db.conversations().setModel(id, choice)
+        c.prefs.setLastChoice(choice)
+        if (id != null && before != choice && messages.value.isNotEmpty()) {
+            _modelSwitched.tryEmit(engine.displayName(choice) ?: choice.substringAfter("tier:"))
+        }
     }
+
+    private val _modelSwitched = MutableSharedFlow<String>(extraBufferCapacity = 2)
+    /** Nome do modelo que vai responder a partir de agora (para avisar na tela). */
+    val modelSwitched: SharedFlow<String> = _modelSwitched
 
     fun setPreset(presetId: String) = viewModelScope.launch {
         val id = convId.value
@@ -250,7 +260,29 @@ class ChatViewModel(
 
     // ------------------------------------------------------------------ anexos
 
+    /** Várias imagens de uma vez (galeria, compartilhar). */
+    fun addAttachments(context: Context, uris: List<Uri>, asImage: Boolean) = viewModelScope.launch {
+        val room = MAX_IMAGES - attachments.value.count { it.kind == "image" }
+        if (asImage && uris.size > room) toast(if (room <= 0) "Até $MAX_IMAGES imagens por mensagem." else "Só cabem mais $room imagens nesta mensagem.")
+        uris.take(if (asImage) room.coerceAtLeast(0) else uris.size).forEach { addAttachment(context, it, asImage).join() }
+    }
+
+    /** Cola a imagem da área de transferência, se houver. */
+    fun pasteImage(context: Context): Boolean {
+        val cm = context.getSystemService(android.content.ClipboardManager::class.java)
+        val clip = cm.primaryClip ?: return false
+        val uri = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }.firstOrNull() ?: return false
+        val mime = context.contentResolver.getType(uri) ?: ""
+        if (!mime.startsWith("image/")) return false
+        addAttachment(context, uri, asImage = true)
+        return true
+    }
+
     fun addAttachment(context: Context, uri: Uri, asImage: Boolean) = viewModelScope.launch {
+        if (asImage && attachments.value.count { it.kind == "image" } >= MAX_IMAGES) {
+            toast("Até $MAX_IMAGES imagens por mensagem.")
+            return@launch
+        }
         val result = withContext(Dispatchers.IO) {
             runCatching {
                 val cr = context.contentResolver
@@ -266,9 +298,9 @@ class ChatViewModel(
                 }
                 val mime = cr.getType(uri) ?: "application/octet-stream"
                 if (asImage || mime.startsWith("image/")) {
-                    if (size > 25_000_000) error("Imagem grande demais (máx. 25 MB).")
+                    if (size > 40_000_000) error("Imagem grande demais (máx. 40 MB).")
                     val bytes = cr.openInputStream(uri)!!.use { it.readBytes() }
-                    ChatEngine.prepareImage(context, bytes, name) ?: error("Não foi possível ler a imagem.")
+                    com.noc.app.chat.Images.prepare(context, bytes, name, mime) ?: error("Não foi possível ler a imagem.")
                 } else {
                     if (size > 400_000) error("Arquivo grande demais para o contexto (máx. 400 KB de texto).")
                     val bytes = cr.openInputStream(uri)!!.use { it.readBytes() }
@@ -278,16 +310,26 @@ class ChatViewModel(
                 }
             }
         }
-        result.onSuccess { a -> attachments.update { it + a } }
+        result.onSuccess { a -> attachments.update { list -> if (a.sha256 != null && list.any { it.sha256 == a.sha256 }) list else list + a } }
             .onFailure { toast(it.message ?: "Não foi possível anexar.") }
+    }
+
+    /** Arquivo temporário para a câmera escrever a foto. */
+    fun newCameraUri(context: Context): Uri {
+        val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
+        val file = java.io.File(dir, "foto-${System.currentTimeMillis()}.jpg")
+        return androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file)
     }
 
     fun removeAttachment(a: Attachment) = attachments.update { it - a }
 
     fun loadModel(key: String, context: Int?) = viewModelScope.launch {
-        runCatching {
-            c.connection.call("models.load", buildJsonObject { put("model", key); context?.let { put("context", it) } })
-        }.onFailure { toast("Não foi possível carregar o modelo agora.") }
+        val name = engine.displayName(key) ?: key
+        c.modelOps.load(key, name, context)?.let { toast(it) }
+    }
+
+    companion object {
+        const val MAX_IMAGES = 6
     }
 
     class Factory(private val c: AppContainer, private val id: String, private val preset: String?) : ViewModelProvider.Factory {

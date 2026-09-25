@@ -69,6 +69,8 @@ data class MessageEntity(
     /** finish_reason: stop | length | cancelled | error */
     val finishReason: String? = null,
     val reasoningMs: Long? = null,
+    /** Nome amigável do modelo que respondeu, gravado na hora (o modelo pode mudar de nome ou sumir depois). */
+    val modelName: String? = null,
 )
 
 @Entity(tableName = "presets")

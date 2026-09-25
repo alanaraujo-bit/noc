@@ -48,7 +48,7 @@ object Routes {
     const val PAIR = "pair?link={link}"
     const val SETUP_CHECK = "setup-check"
     const val HOME = "home"
-    const val CHAT = "chat/{id}?draft={draft}&preset={preset}"
+    const val CHAT = "chat/{id}?draft={draft}&preset={preset}&msg={msg}"
     const val HISTORY = "history"
     const val MODELS = "models"
     const val PRESETS = "presets"
@@ -59,9 +59,13 @@ object Routes {
     const val COMPUTERS = "computers"
     const val SECURITY = "security"
     const val DIAGNOSTICS = "diagnostics"
+    const val ACTIVITY = "activity"
+    const val STATUS = "status"
+    const val VOICE = "voice"
+    const val NOTIFICATIONS = "notifications"
 
-    fun chat(id: String, draft: String? = null, preset: String? = null): String {
-        val q = listOfNotNull(draft?.let { "draft=" + Uri.encode(it) }, preset?.let { "preset=" + Uri.encode(it) })
+    fun chat(id: String, draft: String? = null, preset: String? = null, msg: String? = null): String {
+        val q = listOfNotNull(draft?.let { "draft=" + Uri.encode(it) }, preset?.let { "preset=" + Uri.encode(it) }, msg?.let { "msg=" + Uri.encode(it) })
         return "chat/$id" + if (q.isEmpty()) "" else "?" + q.joinToString("&")
     }
 
@@ -92,8 +96,17 @@ fun NocNavHost(container: AppContainer, prefs: AppPrefs, incoming: MutableStateF
     LaunchedEffect(pending) {
         when (val i = pending) {
             is MainActivity.Incoming.PairLink -> nav.navigate(Routes.pair(i.uri))
-            is MainActivity.Incoming.OpenConversation -> nav.navigate(Routes.chat(i.id)) { launchSingleTop = true }
+            is MainActivity.Incoming.OpenConversation -> nav.navigate(Routes.chat(i.id, msg = i.messageId)) { launchSingleTop = true }
             is MainActivity.Incoming.SharedText -> if (prefs.onboardingDone) nav.navigate(Routes.chat(Routes.NEW, i.text))
+            is MainActivity.Incoming.SharedImages -> if (prefs.onboardingDone) {
+                container.pendingShare.value = i.uris
+                nav.navigate(Routes.chat(Routes.NEW, i.text))
+            }
+            is MainActivity.Incoming.OpenRoute -> if (prefs.onboardingDone) when (i.route) {
+                "models" -> nav.navigate(Routes.MODELS) { launchSingleTop = true }
+                "activity" -> nav.navigate(Routes.ACTIVITY) { launchSingleTop = true }
+                "status" -> nav.navigate(Routes.STATUS) { launchSingleTop = true }
+            }
             null -> Unit
         }
         if (pending != null) incoming.value = null
@@ -151,6 +164,7 @@ fun NocNavHost(container: AppContainer, prefs: AppPrefs, incoming: MutableStateF
                 navArgument("id") { type = NavType.StringType },
                 navArgument("draft") { type = NavType.StringType; nullable = true; defaultValue = null },
                 navArgument("preset") { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument("msg") { type = NavType.StringType; nullable = true; defaultValue = null },
             ),
         ) { entry ->
             ChatScreen(
@@ -160,10 +174,15 @@ fun NocNavHost(container: AppContainer, prefs: AppPrefs, incoming: MutableStateF
                 initialDraft = entry.arguments?.getString("draft"),
                 initialPreset = entry.arguments?.getString("preset"),
                 nav = nav,
+                initialMessageId = entry.arguments?.getString("msg"),
             )
         }
         composable(Routes.HISTORY) { HistoryScreen(container, nav) }
         composable(Routes.MODELS) { ModelsScreen(container, onBack = { nav.popBackStack() }) }
+        composable(Routes.ACTIVITY) { com.noc.app.ui.activity.ActivityScreen(container, nav) }
+        composable(Routes.STATUS) { com.noc.app.ui.status.StatusScreen(container, nav) }
+        composable(Routes.VOICE) { com.noc.app.ui.settings.VoiceSettingsScreen(container, prefs, onBack = { nav.popBackStack() }) }
+        composable(Routes.NOTIFICATIONS) { com.noc.app.ui.settings.NotificationSettingsScreen(container, prefs, onBack = { nav.popBackStack() }) }
         composable(Routes.PRESETS) { PresetsScreen(container, nav) }
         composable(Routes.PRESET, arguments = listOf(navArgument("id") { type = NavType.StringType })) { e ->
             PresetEditScreen(container, e.arguments!!.getString("id")!!, nav)

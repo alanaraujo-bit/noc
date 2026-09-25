@@ -153,6 +153,12 @@ class ConnectionManager(
     private val _events = MutableSharedFlow<PcEvent>(extraBufferCapacity = 4096)
     val events: SharedFlow<PcEvent> = _events
 
+    private val runtimePrefs = context.getSharedPreferences("noc_runtime", Context.MODE_PRIVATE)
+
+    /** Recursos do Companion na última conexão (vale mesmo offline, para o app não esquecer os perfis). */
+    @Volatile var lastFeatures: Set<String> = runtimePrefs.getStringSet("features", emptySet()) ?: emptySet()
+        private set
+
     private val _latencyMs = MutableStateFlow<Long?>(null)
     val latencyMs: StateFlow<Long?> = _latencyMs.asStateFlow()
 
@@ -275,7 +281,9 @@ class ConnectionManager(
                     wake.onReceive { }
                 }
                 if (!current.isOpen) {
-                    _session.value = null
+                    // só limpa se ainda for a mesma sessão (outra rota pode ter instalado uma nova enquanto esperávamos)
+                    if (_session.value === current) _session.value = null
+                    android.util.Log.i("Noc", "sessão ${current.route} caiu")
                     attempt = 0
                 }
                 continue
@@ -329,11 +337,14 @@ class ConnectionManager(
 
     private suspend fun install(pc: PcEntity, s: NocSession) {
         val old = _session.value
+        android.util.Log.i("Noc", "sessão nova (${s.route}); antiga=${old?.route}")
         sessionJob?.cancel()
         sessionPcId = pc.id
         _session.value = s
         if (old !== s) old?.close()
         val info = PcInfo.parse(s.welcome["pc"]!!.jsonObject)
+        lastFeatures = info.features
+        runtimePrefs.edit().putStringSet("features", info.features).apply()
         s.welcome["status"]?.jsonObject?.let { _status.value = PcStatus.parse(it) }
         _state.value = ConnState.Online(s.route, info, System.currentTimeMillis())
         withContext(Dispatchers.IO) {
@@ -360,6 +371,12 @@ class ConnectionManager(
                 _events.emit(e)
             }
         }
+    }
+
+    /** Pede o estado ao PC agora (telas de status/modelos). */
+    suspend fun refreshStatus() {
+        val s = _session.value?.takeIf { it.isOpen } ?: return
+        runCatching { s.call("status") }.onSuccess { _status.value = PcStatus.parse(it) }
     }
 
     suspend fun refreshModels() {

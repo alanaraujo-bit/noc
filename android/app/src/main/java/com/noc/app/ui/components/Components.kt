@@ -360,3 +360,24 @@ fun Skeleton(modifier: Modifier = Modifier, shape: RoundedCornerShape = RoundedC
 }
 
 val ScreenPadding = PaddingValues(horizontal = 20.dp)
+
+/** Indicador global discreto: "1 tarefa em andamento". Toque abre a Atividade. */
+@Composable
+fun TaskPill(count: Int, compact: Boolean = false, onClick: () -> Unit) {
+    val c = Noc.colors
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .background(c.accentSoft)
+            .pressable(onClick = onClick)
+            .padding(horizontal = if (compact) 10.dp else 14.dp, vertical = if (compact) 6.dp else 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        StatusDot(c.accent, pulsing = true, size = 7.dp)
+        Spacer(Modifier.width(7.dp))
+        Text(
+            if (compact) "$count" else if (count == 1) "1 tarefa em andamento" else "$count tarefas em andamento",
+            style = MaterialTheme.typography.labelMedium, color = c.text,
+        )
+    }
+}

@@ -78,6 +78,11 @@ data class GenStats(
     val reasoningTokens: Int? = null,
     val context: Int? = null,
     val route: String? = null,
+    /** Tempo de parede desde que o PC começou a tarefa (inclui carregar modelo). */
+    val wallMs: Long? = null,
+    /** Tempo esperando na fila do PC. */
+    val queuedMs: Long? = null,
+    val modelName: String? = null,
 ) {
     fun encode(): String = NocJson.encodeToString(this)
 
@@ -97,6 +102,12 @@ data class Attachment(
     val text: String? = null,
     /** Caminho do arquivo local em cache (kind=image). */
     val path: String? = null,
+    /** SHA-256 do arquivo (kind=image): o PC guarda a imagem por esse hash. */
+    val sha256: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    /** Tamanho original antes da otimização. */
+    val originalSize: Long? = null,
 ) {
     companion object {
         fun decodeList(s: String?): List<Attachment> =

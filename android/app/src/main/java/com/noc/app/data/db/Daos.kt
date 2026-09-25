@@ -159,6 +159,21 @@ interface MessageDao {
         stats: String?, error: String?, finish: String?, reasoningMs: Long?,
     )
 
+    @Query("SELECT * FROM messages WHERE jobId = :job LIMIT 1")
+    suspend fun byJob(job: String): MessageEntity?
+
+    @Query("SELECT * FROM messages WHERE jobId IS NOT NULL AND createdAt > :since ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun recentJobs(since: Long, limit: Int): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE jobId IS NOT NULL AND createdAt > :since ORDER BY createdAt DESC LIMIT 100")
+    fun observeRecentJobs(since: Long): Flow<List<MessageEntity>>
+
+    @Query("UPDATE messages SET modelName = :name WHERE id = :id")
+    suspend fun setModelName(id: String, name: String?)
+
+    @Query("UPDATE messages SET model = COALESCE(:model, model), modelName = COALESCE(:name, modelName) WHERE id = :id")
+    suspend fun setModelInfo(id: String, model: String?, name: String?)
+
     @Query("UPDATE messages SET status = :status, error = :error WHERE id = :id")
     suspend fun setStatus(id: String, status: String, error: String?)
 

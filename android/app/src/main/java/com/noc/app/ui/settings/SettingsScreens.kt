@@ -41,6 +41,8 @@ import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.TextSnippet
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.TaskAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -120,14 +122,20 @@ fun SettingsScreen(container: AppContainer, prefs: AppPrefs, nav: NavHostControl
                     icon = Icons.Rounded.Computer,
                 ) { nav.navigate(if (pc == null) Routes.pair() else Routes.COMPUTERS) }
                 GroupDivider()
+                RowItem("Status do PC", "GPU, VRAM, modelo, velocidade", icon = Icons.Rounded.Speed) { nav.navigate(Routes.STATUS) }
+                GroupDivider()
+                RowItem("Atividade", "Tarefas em andamento e concluídas", icon = Icons.Rounded.TaskAlt) { nav.navigate(Routes.ACTIVITY) }
+                GroupDivider()
                 RowItem("Diagnóstico", "Descubra por que algo não está funcionando", icon = Icons.Rounded.MonitorHeart) { nav.navigate(Routes.DIAGNOSTICS) }
             }
 
             SectionLabel("IA", Modifier.padding(top = 22.dp))
             Group {
-                RowItem("Modelos", "Carregar, descarregar, contexto", icon = Icons.Rounded.Memory) { nav.navigate(Routes.MODELS) }
+                RowItem("Modelos", "Rápido, Inteligente, Profundo e todos os seus modelos", icon = Icons.Rounded.Memory) { nav.navigate(Routes.MODELS) }
                 GroupDivider()
-                RowItem("Perfis", "Programação, Pesquisa, Criatividade…", icon = Icons.Rounded.Tune) { nav.navigate(Routes.PRESETS) }
+                RowItem("Estilos", "Programação, Pesquisa, Criatividade…", icon = Icons.Rounded.Tune) { nav.navigate(Routes.PRESETS) }
+                GroupDivider()
+                RowItem("Voz e ditado", "Transcrição no seu PC, dicionário pessoal", icon = Icons.Rounded.Mic) { nav.navigate(Routes.VOICE) }
                 GroupDivider()
                 RowItem("Biblioteca de prompts", "Instruções de sistema reutilizáveis", icon = Icons.Rounded.TextSnippet) { nav.navigate(Routes.prompts()) }
             }
@@ -140,12 +148,7 @@ fun SettingsScreen(container: AppContainer, prefs: AppPrefs, nav: NavHostControl
                 GroupDivider()
                 ToggleRow("Enviar com Enter", "Enter envia em vez de pular linha", prefs.sendWithEnter, Icons.Rounded.KeyboardReturn) { scope.launch { container.prefs.setSendWithEnter(it) } }
                 GroupDivider()
-                ToggleRow("Avisar quando terminar", "Notificação se a resposta ficar pronta com o app fechado", prefs.notifyWhenDone, Icons.Rounded.Notifications) { on ->
-                    if (on && Build.VERSION.SDK_INT >= 33 &&
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-                    ) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    else scope.launch { container.prefs.setNotifyWhenDone(on) }
-                }
+                RowItem("Notificações", if (prefs.notifyWhenDone) "Avisos, progresso e privacidade na tela bloqueada" else "Desligadas", icon = Icons.Rounded.Notifications) { nav.navigate(Routes.NOTIFICATIONS) }
             }
 
             SectionLabel("Aparência", Modifier.padding(top = 22.dp))

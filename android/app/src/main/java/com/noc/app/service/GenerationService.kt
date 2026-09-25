@@ -1,38 +1,30 @@
 package com.noc.app.service
 
-import android.Manifest
-import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.ProcessLifecycleOwner
-import com.noc.app.MainActivity
 import com.noc.app.NocApp
-import com.noc.app.R
-import com.noc.app.chat.MessageStatus
+import com.noc.app.chat.LiveReply
+import com.noc.app.core.net.ConnState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
- * Mantém o app vivo enquanto uma resposta está sendo gerada, mesmo com a tela bloqueada
- * ou o app em segundo plano. Some sozinho quando não há mais geração.
+ * Serviço em primeiro plano só enquanto o PC trabalha para você (resposta, imagem, carga de modelo pedida
+ * pelo celular). Mantém a conexão para receber o fim na hora, com uma única notificação que se atualiza
+ * só quando a etapa muda (o cronômetro corre sozinho). Some quando não há mais nada em andamento.
+ * Sem wake lock: o processamento é no PC; o celular só espera.
  */
 class GenerationService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -41,15 +33,16 @@ class GenerationService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        ensureChannels(this)
-        val notification = progressNotification(this, null, 1)
+        val container = (application as NocApp).container
+        Notifier.ensureChannels(this)
+        val notification = container.chat.notifier.progress(container.chat.liveSnapshot(), emptyMap(), true, com.noc.app.data.prefs.LockPrivacy.NOTICE, container.modelOps.current())
         try {
             ServiceCompat.startForeground(
-                this, ID_PROGRESS, notification,
+                this, Notifier.ID_PROGRESS, notification,
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0,
             )
         } catch (e: Exception) {
-            // Android pode negar FGS em alguns estados; a geração segue no PC e é retomada ao voltar.
+            // O Android pode negar em alguns estados; a tarefa segue no PC e o SyncWorker busca o resultado depois.
             stopSelf()
             return START_NOT_STICKY
         }
@@ -58,19 +51,32 @@ class GenerationService : Service() {
     }
 
     private suspend fun watch() {
-        val engine = (application as NocApp).container.chat
+        val container = (application as NocApp).container
+        val engine = container.chat
         val nm = getSystemService(NotificationManager::class.java)
+        var lastKey = ""
+        var lastTokensAt = 0L
         while (true) {
-            val ids = engine.liveIds.value
-            if (ids.isEmpty()) {
-                delay(400)
-                if (engine.liveIds.value.isEmpty()) break
+            val tasks = engine.liveSnapshot()
+            val op = container.modelOps.current()
+            if (tasks.isEmpty() && op == null) {
+                delay(600)
+                if (engine.liveSnapshot().isEmpty() && container.modelOps.current() == null) break
                 continue
             }
-            val live = ids.mapNotNull { engine.liveFlow(it)?.value }
-            val tps = live.firstNotNullOfOrNull { it.tps }
-            if (hasPermission(this)) nm.notify(ID_PROGRESS, progressNotification(this, tps, ids.size))
-            delay(1_000)
+            val prefs = container.prefs.current()
+            val online = container.connection.state.value is ConnState.Online
+            // atualiza quando a etapa muda; a contagem de tokens no máximo a cada 5 s
+            val key = tasks.joinToString("|") { "${it.messageId}:${it.phase}:${it.detached}:${it.ahead}:${(it.upload ?: 0f).times(10).toInt()}" } + "|$op|$online"
+            val now = System.currentTimeMillis()
+            val tokensDue = tasks.any { it.phase == LiveReply.Phase.GENERATING } && now - lastTokensAt > 5_000
+            if ((key != lastKey || tokensDue) && prefs.notifyProgress && engine.notifier.canNotify()) {
+                lastKey = key
+                if (tokensDue) lastTokensAt = now
+                val titles = tasks.associate { it.conversationId to container.db.conversations().get(it.conversationId)?.title }
+                nm.notify(Notifier.ID_PROGRESS, engine.notifier.progress(tasks, titles, online, prefs.lockPrivacy, op))
+            }
+            delay(700)
         }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -82,85 +88,12 @@ class GenerationService : Service() {
     }
 
     companion object {
-        private const val CH_PROGRESS = "generation"
-        private const val CH_DONE = "replies"
-        private const val ID_PROGRESS = 101
-
         fun ensureRunning(context: Context) {
             val app = context.applicationContext
             try {
                 ContextCompat.startForegroundService(app, Intent(app, GenerationService::class.java))
             } catch (e: Exception) {
-                // Em segundo plano o Android pode recusar; tudo bem, a geração continua no PC.
-            }
-        }
-
-        fun ensureChannels(context: Context) {
-            val nm = context.getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(
-                NotificationChannel(CH_PROGRESS, "Gerando resposta", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Aparece enquanto seu PC está respondendo"
-                    setShowBadge(false)
-                },
-            )
-            nm.createNotificationChannel(
-                NotificationChannel(CH_DONE, "Respostas prontas", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "Avisa quando uma resposta termina com o app em segundo plano"
-                },
-            )
-        }
-
-        private fun hasPermission(context: Context) =
-            Build.VERSION.SDK_INT < 33 ||
-                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-
-        private fun openApp(context: Context, conversationId: String?): PendingIntent {
-            val intent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                conversationId?.let { putExtra(MainActivity.EXTRA_CONVERSATION, it) }
-            }
-            return PendingIntent.getActivity(
-                context, conversationId?.hashCode() ?: 0, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
-        }
-
-        private fun progressNotification(context: Context, tps: Double?, count: Int): Notification =
-            NotificationCompat.Builder(context, CH_PROGRESS)
-                .setSmallIcon(R.drawable.ic_stat_noc)
-                .setContentTitle(if (count > 1) "Gerando $count respostas" else "Gerando resposta")
-                .setContentText(tps?.let { "No seu PC · ${"%.0f".format(it)} tokens/s" } ?: "No seu PC")
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setSilent(true)
-                .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-                .setProgress(0, 0, true)
-                .setContentIntent(openApp(context, null))
-                .build()
-
-        /** Avisa que a resposta ficou pronta — só se o app não estiver na tela. */
-        fun notifyFinished(context: Context, conversationId: String, content: String, status: String) {
-            val app = context.applicationContext as NocApp
-            val inForeground = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-            if (inForeground || !hasPermission(context)) return
-            CoroutineScope(Dispatchers.IO).launch {
-                if (!app.container.prefs.flow.first().notifyWhenDone) return@launch
-                val title = app.container.db.conversations().get(conversationId)?.title ?: "Noc"
-                ensureChannels(context)
-                val text = when (status) {
-                    MessageStatus.ERROR -> "Não foi possível concluir a resposta."
-                    MessageStatus.CANCELLED -> "Resposta interrompida."
-                    else -> content.replace(Regex("[#*_`>]"), "").replace(Regex("\\s+"), " ").trim().take(200)
-                }
-                val n = NotificationCompat.Builder(context, CH_DONE)
-                    .setSmallIcon(R.drawable.ic_stat_noc)
-                    .setContentTitle(title)
-                    .setContentText(text)
-                    .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                    .setAutoCancel(true)
-                    .setContentIntent(openApp(context, conversationId))
-                    .build()
-                context.getSystemService(NotificationManager::class.java).notify(conversationId.hashCode(), n)
+                // Em segundo plano o Android pode recusar; tudo bem, a tarefa continua no PC.
             }
         }
     }

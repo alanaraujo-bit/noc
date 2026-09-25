@@ -21,8 +21,10 @@ class MainActivity : ComponentActivity() {
 
     sealed interface Incoming {
         data class PairLink(val uri: String) : Incoming
-        data class OpenConversation(val id: String) : Incoming
+        data class OpenConversation(val id: String, val messageId: String? = null) : Incoming
         data class SharedText(val text: String) : Incoming
+        data class SharedImages(val uris: List<android.net.Uri>, val text: String?) : Incoming
+        data class OpenRoute(val route: String) : Incoming
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,7 +61,20 @@ class MainActivity : ComponentActivity() {
             intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "noc" ->
                 incoming.value = Incoming.PairLink(intent.dataString!!)
             intent.hasExtra(EXTRA_CONVERSATION) ->
-                incoming.value = Incoming.OpenConversation(intent.getStringExtra(EXTRA_CONVERSATION)!!)
+                incoming.value = Incoming.OpenConversation(intent.getStringExtra(EXTRA_CONVERSATION)!!, intent.getStringExtra(EXTRA_MESSAGE))
+            intent.hasExtra(EXTRA_ROUTE) -> incoming.value = Incoming.OpenRoute(intent.getStringExtra(EXTRA_ROUTE)!!)
+            intent.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true -> {
+                @Suppress("DEPRECATION")
+                val uri = if (android.os.Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                    else intent.getParcelableExtra(Intent.EXTRA_STREAM) as? android.net.Uri
+                if (uri != null) incoming.value = Incoming.SharedImages(listOf(uri), intent.getStringExtra(Intent.EXTRA_TEXT))
+            }
+            intent.action == Intent.ACTION_SEND_MULTIPLE && intent.type?.startsWith("image/") == true -> {
+                @Suppress("DEPRECATION")
+                val uris = if (android.os.Build.VERSION.SDK_INT >= 33) intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                    else intent.getParcelableArrayListExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+                if (!uris.isNullOrEmpty()) incoming.value = Incoming.SharedImages(uris.take(6), intent.getStringExtra(Intent.EXTRA_TEXT))
+            }
             intent.action == Intent.ACTION_SEND && intent.type == "text/plain" ->
                 intent.getStringExtra(Intent.EXTRA_TEXT)?.let { incoming.value = Incoming.SharedText(it) }
         }
@@ -67,5 +82,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_CONVERSATION = "conversation"
+        const val EXTRA_MESSAGE = "message"
+        const val EXTRA_ROUTE = "route"
     }
 }

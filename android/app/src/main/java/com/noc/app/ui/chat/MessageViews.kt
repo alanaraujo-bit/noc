@@ -84,7 +84,13 @@ fun UserMessage(
     val atts = remember(m.attachmentsJson) { Attachment.decodeList(m.attachmentsJson) }
     var showTime by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(start = 48.dp), horizontalAlignment = Alignment.End) {
-        atts.forEach { a -> AttachmentPill(a, Modifier.padding(bottom = 6.dp)) }
+        val images = atts.filter { it.kind == "image" && it.path != null }
+        if (images.isNotEmpty()) {
+            Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                images.take(4).forEach { a -> ImageChip(a, onRemove = null, size = if (images.size == 1) 150 else 88) }
+            }
+        }
+        atts.filter { it.kind != "image" || it.path == null }.forEach { a -> AttachmentPill(a, Modifier.padding(bottom = 6.dp)) }
         if (m.content.isNotBlank()) {
             Box(
                 Modifier
@@ -165,6 +171,9 @@ fun AssistantMessage(
     modelName: (String?) -> String,
     actions: ReplyActions,
     onLongPress: () -> Unit,
+    /** Mostrar (uma vez) "pode sair daqui, avisamos quando terminar". */
+    leaveHint: Boolean = false,
+    onLeaveHintShown: () -> Unit = {},
 ) {
     val m = ui.entity
     val liveState = live?.collectAsState()?.value
@@ -193,13 +202,16 @@ fun AssistantMessage(
 
         when {
             content.isNotEmpty() -> MarkdownText(content, streaming = streaming)
-            streaming && reasoning.isEmpty() -> PendingIndicator(liveState!!, online, modelName(m.model))
+            streaming && reasoning.isEmpty() -> PendingIndicator(liveState!!, online, liveState.modelName ?: m.modelName ?: modelName(m.model))
         }
 
         if (streaming && content.isNotEmpty()) {
             Spacer(Modifier.padding(top = 8.dp))
-            TypingDots()
+            if (liveState!!.detached) {
+                Text(liveState.describe(online), style = MaterialTheme.typography.bodySmall, color = c.text3)
+            } else TypingDots()
         }
+        if (streaming && leaveHint) LeaveHint(liveState!!, onLeaveHintShown)
 
         if (!streaming) {
             StatusNote(m, onContinue = actions.onContinue, onRetry = actions.onRetry)
@@ -230,16 +242,47 @@ private fun PendingIndicator(s: LiveReply, online: Boolean, model: String) {
     LaunchedEffect(s.phase) {
         while (true) { delay(1000); now = System.currentTimeMillis() }
     }
-    val elapsed = (now - s.startedAt).coerceAtLeast(0)
-    val text = when (s.phase) {
-        LiveReply.Phase.WAITING -> if (online) "Enviando ao seu PC…" else "Sem conexão agora — envio assim que o PC voltar."
-        LiveReply.Phase.LOADING -> "Carregando $model no PC… ${elapsed / 1000} s"
-        LiveReply.Phase.GENERATING -> "Pensando…"
+    val inPhase = ((now - s.phaseSince) / 1000).coerceAtLeast(0)
+    val base = s.copy(modelName = s.modelName ?: model).describe(online)
+    val text = when {
+        s.detached -> base
+        s.phase == LiveReply.Phase.LOADING -> base + " $inPhase s" + (s.expectedSeconds?.let { " de ~${it.toInt()} s" } ?: "")
+        s.phase == LiveReply.Phase.PREPARING && inPhase >= 3 -> "$base $inPhase s"
+        s.phase == LiveReply.Phase.SENDING && !online -> "Sem conexão agora — envio assim que o PC voltar."
+        else -> base
     }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
-        TypingDots()
-        Spacer(Modifier.width(12.dp))
-        Text(text, style = MaterialTheme.typography.bodyMedium, color = if (!online && s.phase == LiveReply.Phase.WAITING) c.warn else c.text2)
+    Column(Modifier.padding(vertical = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TypingDots()
+            Spacer(Modifier.width(12.dp))
+            Text(text, style = MaterialTheme.typography.bodyMedium, color = if (!online && (s.phase == LiveReply.Phase.SENDING || s.detached)) c.warn else c.text2)
+        }
+        if (s.phase == LiveReply.Phase.UPLOADING && s.upload != null) {
+            Spacer(Modifier.padding(top = 8.dp))
+            Box(Modifier.fillMaxWidth(0.6f).heightIn(min = 4.dp).clip(RoundedCornerShape(2.dp)).background(c.surface2)) {
+                Box(Modifier.fillMaxWidth(s.upload).heightIn(min = 4.dp).clip(RoundedCornerShape(2.dp)).background(c.accent))
+            }
+            s.uploadBytes?.let { Text(Texts.bytes(it), style = MonoSmall, color = c.text3, modifier = Modifier.padding(top = 4.dp)) }
+        }
+    }
+}
+
+/** "Pode sair daqui": aparece uma vez numa tarefa que está demorando, e só nas primeiras vezes. */
+@Composable
+private fun LeaveHint(s: LiveReply, onShown: () -> Unit) {
+    val c = Noc.colors
+    var show by remember(s.messageId) { mutableStateOf(false) }
+    LaunchedEffect(s.messageId) {
+        delay(8_000)
+        show = true
+        onShown()
+    }
+    AnimatedVisibility(show, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+        Text(
+            "Pode sair daqui ou bloquear a tela — a resposta continua no seu PC e avisamos quando terminar.",
+            style = MaterialTheme.typography.bodySmall, color = c.text3,
+            modifier = Modifier.padding(top = 10.dp).clip(RoundedCornerShape(12.dp)).background(c.surface).padding(horizontal = 12.dp, vertical = 9.dp),
+        )
     }
 }
 
@@ -353,20 +396,27 @@ private fun Footer(ui: MessageUi, isLast: Boolean, showStats: Boolean, a: ReplyA
         FooterIcon(Icons.Rounded.Refresh, "Gerar outra resposta", c.text3, a.onRegenerate)
         if (ui.branchCount > 1) BranchSwitcher(ui, a.onBranch)
         FooterIcon(Icons.Rounded.MoreHoriz, "Mais ações", c.text3, a.onMore)
-        Spacer(Modifier.weight(1f))
+        val name = m.modelName ?: stats?.modelName
         if (showStats && stats != null) {
+            val wall = stats.wallMs ?: stats.totalMs
             val parts = listOfNotNull(
                 stats.tps?.let { "%.0f tok/s".format(it) },
                 stats.ttftMs?.let { "${Texts.seconds(it)} p/ 1º token" }?.takeIf { stats.tps == null },
+                wall?.takeIf { it >= 20_000 }?.let { "em " + Texts.seconds(it) },
             )
-            if (parts.isNotEmpty()) {
+            val label = (listOfNotNull(name) + parts).joinToString(" · ")
+            if (label.isEmpty()) Spacer(Modifier.weight(1f))
+            if (label.isNotEmpty()) {
                 Text(
-                    parts.joinToString(" · "),
-                    style = MonoSmall, color = c.text3,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).pressable(onClick = a.onStats).padding(horizontal = 8.dp, vertical = 8.dp),
+                    label,
+                    style = MonoSmall, color = c.text3, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).pressable(onClick = a.onStats).padding(horizontal = 8.dp, vertical = 8.dp),
                 )
             }
-        }
+        } else if (name != null) {
+            Text(name, style = MonoSmall, color = c.text3, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).pressable(onClick = a.onStats).padding(horizontal = 8.dp, vertical = 8.dp))
+        } else Spacer(Modifier.weight(1f))
         Text(Texts.time(m.createdAt), style = MonoSmall, color = c.text3, modifier = Modifier.padding(end = 4.dp))
     }
 }

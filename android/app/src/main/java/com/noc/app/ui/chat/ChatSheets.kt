@@ -44,6 +44,9 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -533,7 +536,10 @@ fun StatsSheet(m: MessageEntity, onDismiss: () -> Unit) {
         Column(Modifier.padding(horizontal = 22.dp)) {
             Text("Esta resposta", style = MaterialTheme.typography.headlineLarge, color = c.text, modifier = Modifier.padding(vertical = 8.dp))
             val rows = listOfNotNull(
-                m.model?.let { "Modelo" to it },
+                (m.modelName ?: s.modelName ?: m.model)?.let { "Modelo" to it },
+                m.model?.takeIf { (m.modelName ?: s.modelName) != null }?.let { "Arquivo" to it },
+                s.queuedMs?.takeIf { it >= 1000 }?.let { "Esperou na fila" to Texts.seconds(it) },
+                s.wallMs?.let { "Tempo no PC" to Texts.seconds(it) },
                 s.tps?.let { "Velocidade" to "%.1f tokens/s".format(it) },
                 s.ttftMs?.let { "Primeiro token" to Texts.seconds(it) },
                 s.totalMs?.let { "Tempo total" to Texts.seconds(it) },
@@ -559,15 +565,45 @@ fun StatsSheet(m: MessageEntity, onDismiss: () -> Unit) {
 }
 
 @Composable
-fun AttachSheet(visionEnabled: Boolean, modelName: String?, onImage: () -> Unit, onFile: () -> Unit, onDismiss: () -> Unit) {
+fun AttachSheet(
+    visionEnabled: Boolean,
+    modelName: String?,
+    /** Perfil/modelo com visão para sugerir, quando o atual não enxerga. */
+    visionAlternative: String?,
+    onCamera: () -> Unit,
+    onGallery: () -> Unit,
+    onPaste: () -> Unit,
+    onFile: () -> Unit,
+    onSwitchToVision: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = Noc.colors
     NocSheet(onDismiss) {
-        Text("Anexar", style = MaterialTheme.typography.headlineLarge, color = Noc.colors.text, modifier = Modifier.padding(horizontal = 22.dp, vertical = 8.dp))
-        SheetAction(
-            Icons.Rounded.Image, "Imagem",
-            if (visionEnabled) "Foto ou captura para o modelo analisar" else "${modelName ?: "O modelo atual"} não entende imagens",
-            enabled = visionEnabled,
-        ) { onImage(); onDismiss() }
+        Text("Anexar", style = MaterialTheme.typography.headlineLarge, color = c.text, modifier = Modifier.padding(horizontal = 22.dp, vertical = 8.dp))
+        if (!visionEnabled) {
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.surface)
+                    .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "${modelName ?: "O modelo atual"} não entende imagens." + (visionAlternative?.let { " $it entende." } ?: ""),
+                    style = MaterialTheme.typography.bodySmall, color = c.text2, modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+                )
+                if (visionAlternative != null) {
+                    Text("Trocar", style = MaterialTheme.typography.labelMedium, color = c.accent,
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp)).pressable { onSwitchToVision() }.padding(horizontal = 12.dp, vertical = 10.dp))
+                }
+            }
+        }
+        SheetAction(Icons.Rounded.PhotoCamera, "Câmera", "Tirar uma foto agora", enabled = visionEnabled) { onCamera(); onDismiss() }
+        SheetAction(Icons.Rounded.PhotoLibrary, "Galeria", "Fotos e capturas de tela (até 6)", enabled = visionEnabled) { onGallery(); onDismiss() }
+        SheetAction(Icons.Rounded.ContentPaste, "Colar imagem", "Da área de transferência", enabled = visionEnabled) { onPaste(); onDismiss() }
         SheetAction(Icons.AutoMirrored.Rounded.Notes, "Arquivo de texto ou código", "TXT, MD, CSV, JSON, código-fonte… até 400 KB") { onFile(); onDismiss() }
+        Text(
+            "As imagens vão cifradas direto para o seu PC e são analisadas lá. Nada passa por serviços externos.",
+            style = MaterialTheme.typography.bodySmall, color = c.text3, modifier = Modifier.padding(horizontal = 22.dp, vertical = 10.dp),
+        )
     }
 }
 
