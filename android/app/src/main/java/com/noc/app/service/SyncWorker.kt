@@ -22,14 +22,14 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         val container = (applicationContext as NocApp).container
         val db = container.db
-        if (db.messages().pending().isEmpty()) return Result.success()
+        if (db.messages().pending().isEmpty() && db.messages().imagesToFetch().isEmpty()) return Result.success()
         val release = container.connection.acquire()
         try {
             container.chat.resumePending()
             // espera as tarefas terminarem (o PC manda o fim assim que conectamos) — até ~8 min por rodada
             val deadline = System.currentTimeMillis() + 8 * 60_000
             while (System.currentTimeMillis() < deadline) {
-                if (db.messages().pending().isEmpty()) return Result.success()
+                if (db.messages().pending().isEmpty() && db.messages().imagesToFetch().isEmpty()) return Result.success()
                 delay(3_000)
             }
         } finally {

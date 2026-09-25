@@ -33,7 +33,9 @@ class TaskActionReceiver : BroadcastReceiver() {
                     }
                     RETRY -> {
                         container.chat.notifier.cancelFor(id)
-                        runCatching { container.chat.regenerate(id) }
+                        val m = container.db.messages().get(id)
+                        // imagem que falhou: tenta de novo na mesma mensagem, com os mesmos parâmetros
+                        runCatching { if (m?.kind == "image") container.chat.images.retry(m) else container.chat.regenerate(id) }
                     }
                 }
             } finally {

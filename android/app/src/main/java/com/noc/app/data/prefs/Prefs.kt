@@ -47,6 +47,8 @@ data class AppPrefs(
     /** Perfil/modelo escolhido por último para conversas novas ("tier:fast" ou chave). */
     val lastChoice: String? = null,
     val holdToTalk: Boolean = true,
+    /** Últimas escolhas na criação de imagem (motor, formato, qualidade…). */
+    val imageOptions: String? = null,
 )
 
 class Prefs(private val context: Context) {
@@ -71,6 +73,7 @@ class Prefs(private val context: Context) {
         val leaveHint = androidx.datastore.preferences.core.intPreferencesKey("leave_hint")
         val lastChoice = stringPreferencesKey("last_choice")
         val holdToTalk = booleanPreferencesKey("hold_to_talk")
+        val imageOptions = stringPreferencesKey("image_options")
     }
 
     val flow: Flow<AppPrefs> = context.dataStore.data.map { p ->
@@ -95,6 +98,7 @@ class Prefs(private val context: Context) {
             leaveHintCount = p[K.leaveHint] ?: 0,
             lastChoice = p[K.lastChoice],
             holdToTalk = p[K.holdToTalk] ?: true,
+            imageOptions = p[K.imageOptions],
         )
     }
 
@@ -119,6 +123,7 @@ class Prefs(private val context: Context) {
     suspend fun noteLeaveHint() = context.dataStore.edit { it[K.leaveHint] = (it[K.leaveHint] ?: 0) + 1 }
     suspend fun setLastChoice(v: String?) = context.dataStore.edit { if (v == null) it.remove(K.lastChoice) else it[K.lastChoice] = v }
     suspend fun setHoldToTalk(v: Boolean) = context.dataStore.edit { it[K.holdToTalk] = v }
+    suspend fun setImageOptions(v: String) = context.dataStore.edit { it[K.imageOptions] = v }
 
     /** Registra o modelo usado (alimenta "modelos recentes"). */
     suspend fun noteModelUsed(key: String) = context.dataStore.edit { p ->

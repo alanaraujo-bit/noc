@@ -188,6 +188,49 @@ interface MessageDao {
 
     @Query("UPDATE messages SET status = 'interrupted' WHERE status IN ('streaming','waiting') AND jobId IS NULL")
     suspend fun markOrphans()
+
+    @Query("UPDATE messages SET imageJson = :json WHERE id = :id")
+    suspend fun setImage(id: String, json: String?)
+
+    @Query("UPDATE messages SET imageJson = :json, status = :status, error = :error, finishReason = :finish, lastSeq = :seq, modelName = COALESCE(:name, modelName) WHERE id = :id")
+    suspend fun finishImage(id: String, json: String?, status: String, error: String?, finish: String?, seq: Int, name: String?)
+
+    @Query("UPDATE messages SET lastSeq = :seq, status = :status WHERE id = :id")
+    suspend fun setSeq(id: String, seq: Int, status: String)
+
+    /** Imagens terminadas no PC que ainda não chegaram inteiras a este celular. */
+    @Query("SELECT * FROM messages WHERE kind = 'image' AND status = 'done' AND imageJson LIKE '%\"pending\":true%'")
+    suspend fun imagesToFetch(): List<MessageEntity>
+}
+
+@Dao
+interface CreationDao {
+    @Query("SELECT * FROM creations ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<CreationEntity>>
+
+    @Query("SELECT * FROM creations WHERE id = :id")
+    suspend fun get(id: String): CreationEntity?
+
+    @Query("SELECT * FROM creations WHERE messageId = :messageId ORDER BY id")
+    suspend fun byMessage(messageId: String): List<CreationEntity>
+
+    @Query("SELECT * FROM creations WHERE messageId = :messageId ORDER BY id")
+    fun observeByMessage(messageId: String): Flow<List<CreationEntity>>
+
+    @Upsert
+    suspend fun upsert(c: CreationEntity)
+
+    @Query("UPDATE creations SET path = :path, thumbPath = :thumb, bytes = :bytes WHERE id = :id")
+    suspend fun setFiles(id: String, path: String?, thumb: String?, bytes: Long)
+
+    @Query("UPDATE creations SET favorite = :fav WHERE id = :id")
+    suspend fun setFavorite(id: String, fav: Boolean)
+
+    @Query("DELETE FROM creations WHERE id IN (:ids)")
+    suspend fun delete(ids: List<String>)
+
+    @Query("SELECT COUNT(*) FROM creations")
+    fun observeCount(): Flow<Int>
 }
 
 @Dao

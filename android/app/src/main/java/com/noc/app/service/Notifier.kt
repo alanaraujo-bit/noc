@@ -103,6 +103,54 @@ class Notifier(
         updateSummary(p.lockPrivacy)
     }
 
+    /** Uma imagem terminou (ou falhou). Mesmas regras das respostas: privacidade, conversa aberta, sem aviso ao cancelar. */
+    suspend fun onImageFinished(msg: MessageEntity, job: com.noc.app.chat.ImageJob?, status: String, error: String?, detail: String?) = withContext(Dispatchers.IO) {
+        val p = prefs.current()
+        if (!p.notifyWhenDone || !canNotify()) return@withContext
+        if (status == MessageStatus.CANCELLED) return@withContext
+        val foreground = inForeground()
+        if (foreground && engine.visibleConversation.value == msg.conversationId) return@withContext
+        ensureChannels(context)
+        val model = job?.modelName ?: msg.modelName ?: "Seu PC"
+        val n = job?.images?.count { it.local != null } ?: 0
+        val excerpt = job?.prompt?.replace(Regex("\\s+"), " ")?.trim()?.let { if (it.length > 90) it.take(88) + "…" else it }
+        val (title, text) = when (status) {
+            MessageStatus.DONE -> (if (n > 1) "Suas $n imagens estão prontas" else "Sua imagem está pronta") to
+                listOfNotNull("$model terminou a geração.", excerpt?.let { "“$it”" }).joinToString(" ")
+            MessageStatus.INTERRUPTED -> "Imagem interrompida" to "Toque para tentar de novo."
+            else -> "Não foi possível criar a imagem" to ((detail?.takeIf { it.isNotBlank() } ?: "A geração falhou no PC.") + " Toque para tentar de novo.")
+        }
+        val notice = if (status == MessageStatus.DONE) "Sua imagem está pronta." else "Uma imagem precisa da sua atenção."
+        val open = openIntent(msg.conversationId, msg.id)
+        if (p.lockPrivacy == LockPrivacy.NOTICE && locked()) {
+            nm.notify(idFor(msg.id), generic(notice, open, foreground))
+            updateSummary(p.lockPrivacy)
+            return@withContext
+        }
+        val b = NotificationCompat.Builder(context, CH_REPLIES)
+            .setSmallIcon(R.drawable.ic_stat_noc)
+            .setColor(0xFFC45A1A.toInt())
+            .setContentTitle(title)
+            .setContentText(text)
+            .setAutoCancel(true)
+            .setGroup(GROUP_REPLIES)
+            .setCategory(if (status == MessageStatus.DONE) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_ERROR)
+            .setContentIntent(open)
+        // a miniatura só aparece com privacidade "Completo" (em "Só o aviso" a tela bloqueada troca tudo pelo aviso genérico)
+        val thumb = job?.images?.firstOrNull { it.thumb != null }?.thumb?.let { path ->
+            runCatching { android.graphics.BitmapFactory.decodeFile(path, android.graphics.BitmapFactory.Options().apply { inSampleSize = 1 }) }.getOrNull()
+        }
+        if (status == MessageStatus.DONE && thumb != null && p.lockPrivacy != LockPrivacy.HIDDEN) {
+            b.setLargeIcon(thumb).setStyle(NotificationCompat.BigPictureStyle().bigPicture(thumb).bigLargeIcon(null as android.graphics.Bitmap?).setSummaryText(text))
+        } else b.setStyle(NotificationCompat.BigTextStyle().bigText(text))
+        if (foreground) b.setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW)
+        applyPrivacy(b, p.lockPrivacy, notice)
+        if (p.lockPrivacy == LockPrivacy.NOTICE) b.addExtras(Bundle().apply { putString(EXTRA_NOTICE, notice) })
+        if (status != MessageStatus.DONE) b.addAction(0, "Tentar de novo", actionIntent(TaskActionReceiver.RETRY, msg.id))
+        nm.notify(idFor(msg.id), b.build())
+        updateSummary(p.lockPrivacy)
+    }
+
     // tela apagada conta como bloqueada: o Android costuma travar alguns segundos depois de apagar, sem novo SCREEN_OFF
     private fun locked() = !context.getSystemService(PowerManager::class.java).isInteractive ||
         context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
@@ -163,6 +211,7 @@ class Notifier(
             first == null && modelOp != null -> "Carregando $modelOp…"
             first == null -> "Noc"
             tasks.size > 1 -> "${tasks.size} tarefas no seu PC"
+            first.isImage -> if (first.phase == LiveReply.Phase.GENERATING) "Criando sua imagem" else first.describe(online)
             else -> when (first.phase) {
                 LiveReply.Phase.GENERATING, LiveReply.Phase.THINKING -> if (first.modelName != null) "${first.modelName} está respondendo" else "Gerando resposta"
                 else -> first.describe(online)
@@ -171,6 +220,8 @@ class Notifier(
         val text = when {
             first == null -> "Pode fechar o app; avisamos quando terminar."
             tasks.size > 1 -> tasks.joinToString(" · ") { it.describe(online).removeSuffix("…") }
+            first.isImage -> listOfNotNull(first.modelName, first.describe(online).removeSuffix("…").takeIf { first.phase == LiveReply.Phase.GENERATING }?.substringAfter(" · ", "")?.ifBlank { null })
+                .joinToString(" · ").ifBlank { "Pode fechar o app; avisamos quando terminar." }
             first.phase == LiveReply.Phase.GENERATING || first.phase == LiveReply.Phase.THINKING ->
                 listOfNotNull(first.describe(online).removeSuffix("…"), first.tokens.takeIf { it > 0 }?.let { "$it tokens" }).joinToString(" · ")
             else -> titles[first.conversationId]?.takeIf { privacy == LockPrivacy.FULL } ?: "Pode fechar o app; avisamos quando terminar."
@@ -189,6 +240,8 @@ class Notifier(
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setContentIntent(if (first != null && tasks.size == 1) openIntent(first.conversationId, first.messageId) else openActivity())
         if (first?.phase == LiveReply.Phase.UPLOADING && first.upload != null) b.setProgress(100, (first.upload * 100).toInt(), false)
+        // imagem: barra só com progresso real (passos do modelo); antes disso, sem porcentagem inventada
+        if (first != null && tasks.size == 1 && first.isImage) first.imageProgress?.let { b.setProgress(100, (it * 100).toInt(), false) }
         if (first != null && tasks.size == 1) b.addAction(0, "Parar", actionIntent(TaskActionReceiver.STOP, first.messageId))
         applyPrivacy(b, privacy, "Seu PC está trabalhando")
         return b.build()

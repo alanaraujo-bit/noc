@@ -75,13 +75,36 @@ data class LiveReply(
     val jobId: String? = null,
     /** Conexão caiu no meio: a tarefa continua no PC e retomamos ao voltar. */
     val detached: Boolean = false,
+    // ---- imagem
+    val isImage: Boolean = false,
+    val step: Int? = null,
+    val steps: Int? = null,
+    val imageIndex: Int = 0,
+    val imageCount: Int = 1,
+    /** Prévia real do estado atual (latente → RGB), JPEG em base64. */
+    val preview: String? = null,
+    val imagesReady: Int = 0,
+    /** Progresso de uma etapa longa (otimização na primeira vez). */
+    val stageProgress: Double? = null,
+    /** translate | enhance */
+    val promptMode: String? = null,
 ) {
-    enum class Phase { SENDING, UPLOADING, QUEUED, LOADING, PREPARING, THINKING, GENERATING, RECOVERING, WAITING_LM }
+    enum class Phase { SENDING, UPLOADING, QUEUED, LOADING, PREPARING, THINKING, GENERATING, RECOVERING, WAITING_LM,
+        PREPARING_ENGINE, OPTIMIZING, FREEING, PROMPT, SAVING, DOWNLOADING }
+
+    /** Progresso real da geração da imagem (0..1), pelos passos do modelo; null quando não há como saber. */
+    val imageProgress: Float?
+        get() {
+            val s = step ?: return null
+            val t = steps?.takeIf { it > 0 } ?: return null
+            return ((imageIndex + s.toFloat() / t) / imageCount.coerceAtLeast(1)).coerceIn(0f, 1f)
+        }
 
     /** Fase legível para a interface e a notificação. */
     fun describe(online: Boolean): String = when {
         detached && !online -> "Continuando no seu PC…"
         detached -> "Reconectando…"
+        isImage -> describeImage()
         else -> when (phase) {
             Phase.SENDING -> if (online) "Enviando ao PC…" else "Aguardando conexão com o PC…"
             Phase.UPLOADING -> "Enviando " + (if (images > 1) "$images imagens" else "imagem") + (upload?.let { " · ${(it * 100).toInt()}%" } ?: "…")
@@ -92,7 +115,26 @@ data class LiveReply(
             Phase.GENERATING -> "Gerando…"
             Phase.RECOVERING -> "Retomando no PC…"
             Phase.WAITING_LM -> "Esperando o LM Studio ficar pronto no PC…"
+            else -> "Trabalhando no seu PC…"
         }
+    }
+
+    private fun describeImage(): String = when (phase) {
+        Phase.SENDING -> "Enviando ao PC…"
+        Phase.QUEUED -> when (val a = ahead ?: 0) { 0 -> "Imagem na fila"; 1 -> "Imagem na fila · 1 tarefa antes"; else -> "Imagem na fila · $a tarefas antes" }
+        Phase.PREPARING_ENGINE -> "Preparando o gerador pela primeira vez…"
+        Phase.OPTIMIZING -> "Otimizando o modelo para a sua GPU" + (stageProgress?.let { " · ${(it * 100).toInt()}%" } ?: "…")
+        Phase.FREEING -> "Liberando a GPU…"
+        Phase.LOADING -> "Preparando gerador…"
+        Phase.PROMPT -> if (promptMode == "enhance") "Melhorando a descrição…" else "Entendendo o pedido…"
+        Phase.GENERATING -> {
+            val pct = imageProgress?.let { " · ${(it * 100).toInt()}%" } ?: "…"
+            if (imageCount > 1) "Criando imagem ${(imageIndex + 1).coerceAtMost(imageCount)} de $imageCount$pct" else "Criando sua imagem$pct"
+        }
+        Phase.SAVING -> "Finalizando…"
+        Phase.DOWNLOADING -> "Recebendo a imagem…"
+        Phase.RECOVERING -> "Ajustando os recursos do PC…"
+        else -> "Preparando gerador…"
     }
 }
 
@@ -115,9 +157,9 @@ class ChatEngine(
     private val connection: ConnectionManager,
     private val scope: CoroutineScope,
 ) {
-    private val live = ConcurrentHashMap<String, MutableStateFlow<LiveReply>>()
-    private val runners = ConcurrentHashMap<String, Job>()
-    private val _liveIds = MutableStateFlow<Set<String>>(emptySet())
+    internal val live = ConcurrentHashMap<String, MutableStateFlow<LiveReply>>()
+    internal val runners = ConcurrentHashMap<String, Job>()
+    internal val _liveIds = MutableStateFlow<Set<String>>(emptySet())
     /** Ids das mensagens com tarefa ativa (para a Home, o serviço e a notificação). */
     val liveIds: StateFlow<Set<String>> = _liveIds.asStateFlow()
 
@@ -125,6 +167,9 @@ class ChatEngine(
     val visibleConversation = MutableStateFlow<String?>(null)
 
     val notifier = Notifier(context, prefs, db, this)
+
+    /** Imagens geradas no PC (mesma fila, mesmas retomadas e notificações das respostas). */
+    val images = ImageJobs(context, db, prefs, connection, this, scope)
 
     fun liveFlow(messageId: String): StateFlow<LiveReply>? = live[messageId]
 
@@ -135,9 +180,11 @@ class ChatEngine(
         db.messages().markOrphans()
         for (m in db.messages().pending()) {
             if (live.containsKey(m.id)) continue
+            if (m.kind == "image") { images.resume(m); continue }
             val job = m.jobId ?: continue
             startRunner(m, job, request = null, blobs = emptyList(), baseContent = m.content, baseReasoning = m.reasoning ?: "", fromSeq = m.lastSeq)
         }
+        images.fetchMissing()
     }
 
     val hasPending: Boolean get() = live.isNotEmpty()
@@ -223,11 +270,11 @@ class ChatEngine(
     fun siblings(all: List<MessageEntity>, m: MessageEntity): List<MessageEntity> =
         all.filter { it.parentId == m.parentId && it.role == m.role }.sortedBy { it.createdAt }
 
-    private suspend fun commitLeaf(convId: String, leafId: String?) {
+    internal suspend fun commitLeaf(convId: String, leafId: String?) {
         val all = db.messages().all(convId)
         val path = path(all, leafId)
         val last = path.lastOrNull()
-        val preview = path.lastOrNull { it.content.isNotBlank() }?.content?.let { previewOf(it) }
+        val preview = path.lastOrNull { it.content.isNotBlank() || it.kind == "image" }?.let { if (it.kind == "image") "🖼 Imagem" else previewOf(it.content) }
         db.conversations().setLeaf(convId, last?.id, System.currentTimeMillis(), preview, path.size)
     }
 
@@ -258,6 +305,7 @@ class ChatEngine(
     /** Nova resposta para a mesma pergunta (vira um ramo irmão). */
     suspend fun regenerate(assistantId: String, model: String? = null): String = withContext(Dispatchers.IO) {
         val old = db.messages().get(assistantId) ?: error("mensagem não existe")
+        if (old.kind == "image") return@withContext images.regenerate(old)
         val conv = db.conversations().get(old.conversationId)!!
         val cfg = effectiveConfig(conv)
         val choice = model ?: cfg.choice ?: old.model ?: throw NoModel()
@@ -324,7 +372,7 @@ class ChatEngine(
             // o PC confirma com ok=true quando a tarefa existe e manda o "fim"; senão encerramos aqui mesmo
             if (res?.bool("ok") != true) {
                 runners.remove(messageId)?.cancel()
-                finalizeLocal(messageId, m, MessageStatus.CANCELLED, "cancelled", null)
+                if (msg.kind == "image") images.finalizeCancelled(msg) else finalizeLocal(messageId, m, MessageStatus.CANCELLED, "cancelled", null)
             }
         }
     }
@@ -430,7 +478,7 @@ class ChatEngine(
         // Sem saber o modelo ainda (offline), manda as imagens: o PC recusa com clareza se ele não enxergar.
         val vision = info?.vision ?: (resolved == null)
         val useBlobs = pcSupports("blobs")
-        val msgs = history.filter { it.role == "user" || (it.role == "assistant" && it.content.isNotBlank()) }
+        val msgs = history.map { imageAsText(it) }.filter { it.role == "user" || (it.role == "assistant" && it.content.isNotBlank()) }
 
         // Orçamento de contexto: mantém o prompt de sistema e as mensagens mais recentes.
         val reserve = (cfg.params.maxTokens ?: (ctx / 4)).coerceAtMost(ctx / 2)
@@ -460,6 +508,17 @@ class ChatEngine(
     }
 
     private fun estimateTokens(s: String) = (s.length / 3.2).toInt() + 4
+
+    /** Pedidos de imagem e imagens geradas entram no contexto do LLM como uma frase curta (sem os arquivos). */
+    private fun imageAsText(m: MessageEntity): MessageEntity = when (m.kind) {
+        "image_request" -> m.copy(content = "(Pedi uma imagem: ${m.content})", attachmentsJson = null)
+        "image" -> {
+            val j = ImageJob.decode(m.imageJson)
+            val n = j?.images?.size ?: 0
+            m.copy(content = if (m.status == MessageStatus.DONE && n > 0) "(Criei ${if (n > 1) "$n imagens" else "a imagem"} com ${j?.modelName ?: "o gerador do PC"}.)" else "")
+        }
+        else -> m
+    }
 
     private fun messageJson(m: MessageEntity, vision: Boolean, useBlobs: Boolean, blobs: MutableMap<String, BlobRef>): JsonObject {
         val atts = Attachment.decodeList(m.attachmentsJson).map { Images.ensureHash(it) }

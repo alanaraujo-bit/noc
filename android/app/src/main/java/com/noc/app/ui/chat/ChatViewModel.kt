@@ -115,9 +115,40 @@ class ChatViewModel(
 
     // ------------------------------------------------------------------ envio
 
+    /** Últimas escolhas de criação de imagem (lembradas entre conversas; a seed nunca é lembrada). */
+    val imageOptions: StateFlow<com.noc.app.chat.ImageOptions> = c.prefs.flow
+        .map { com.noc.app.chat.ImageOptions.decode(it.imageOptions) ?: com.noc.app.chat.ImageOptions() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, com.noc.app.chat.ImageOptions())
+
+    fun saveImageOptions(o: com.noc.app.chat.ImageOptions) = viewModelScope.launch { c.prefs.setImageOptions(o.copy(seed = null).encode()) }
+
+    /** Pede uma imagem ao PC. Devolve false se não deu para enviar (o motivo vai num aviso). */
+    fun createImage(prompt: String, options: com.noc.app.chat.ImageOptions): Boolean {
+        if (prompt.isBlank()) return false
+        if (!engine.images.supported()) {
+            toast("Seu PC ainda não cria imagens. Atualize o Noc Companion no PC.")
+            return false
+        }
+        viewModelScope.launch {
+            runCatching {
+                val id = ensureConversation()
+                engine.images.create(id, prompt, options)
+                _scrollToBottom.tryEmit(Unit)
+            }.onFailure { toast("Não foi possível pedir a imagem.") }
+        }
+        return true
+    }
+
     fun send(text: String): Boolean {
         val atts = attachments.value
         if (text.isBlank() && atts.isEmpty()) return false
+        // "Gere uma imagem de…" digitado direto no chat: vai para o gerador de imagens do PC
+        if (atts.isEmpty() && com.noc.app.chat.ImageIntent.matches(text) && engine.images.supported() &&
+            engine.images.caps.value?.anyInstalled != false
+        ) {
+            val base = imageOptions.value
+            return createImage(text, base.copy(count = com.noc.app.chat.ImageIntent.count(text) ?: 1))
+        }
         if (config.value?.model == null) {
             toast("Nenhum modelo disponível. Conecte ao PC para escolher um modelo.")
             return false

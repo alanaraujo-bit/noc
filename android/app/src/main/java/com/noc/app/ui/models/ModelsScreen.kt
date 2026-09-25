@@ -182,6 +182,7 @@ fun ModelsScreen(container: AppContainer, onBack: () -> Unit) {
                         }
                     }
                 }
+                if (container.chat.images.supported()) item("images") { com.noc.app.ui.image.ImageModelsSection(container) }
                 val imports = library.filter { it.str("state") in setOf("working", "failed") || (it.str("state") == "done" && (it.bool("repaired") == true || it.bool("visionAdded") == true)) }
                 if (imports.isNotEmpty()) {
                     item("lib-label") { SectionLabel("Encontrados no seu PC", Modifier.padding(top = 10.dp)) }

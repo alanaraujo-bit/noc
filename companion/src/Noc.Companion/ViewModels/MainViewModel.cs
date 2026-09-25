@@ -83,6 +83,7 @@ public sealed partial class MainViewModel : Observable
         TestRemote = new Command(() => { _ = TestRemoteAsync(); });
         Navigate = new Command(p => Page = p as string ?? "overview");
         InitModels();
+        InitImages();
 
         _host.Changed += QueueRefresh;
         _host.ActivityAdded += e => _ui.BeginInvoke(() => PrependActivity(e));
@@ -344,6 +345,7 @@ public sealed partial class MainViewModel : Observable
         }
         NoDevices = Devices.Count == 0;
         RefreshModels();
+        RefreshImages();
         RefreshPairing();
     }
 
@@ -487,6 +489,7 @@ public sealed partial class MainViewModel : Observable
     {
         if (IsPairingOpen) RefreshPairing();
         if (_host.Models.Op != ModelOpState.Idle || Generating) Refresh();
+        else if (Page == "images") RefreshImages();
     }
 
     // ------------------------------------------------------------------ aprovação (pareamento por código)

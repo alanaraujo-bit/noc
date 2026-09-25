@@ -127,6 +127,11 @@ fun Composer(
     uploading: Boolean = false,
     /** Envio bloqueado (ex.: imagem anexada e o modelo escolhido não enxerga). */
     blockSend: Boolean = false,
+    /** Barra extra no topo do campo (modo "Criar imagem"). */
+    topSlot: (@Composable () -> Unit)? = null,
+    placeholder: String = "Mensagem",
+    /** No modo imagem o botão de modelo/estilo não se aplica. */
+    showModelRow: Boolean = true,
 ) {
     val c = Noc.colors
     val haptic = LocalHapticFeedback.current
@@ -174,6 +179,7 @@ fun Composer(
                 .background(c.surface)
                 .padding(top = 6.dp),
         ) {
+            topSlot?.invoke()
             if (recording != null && !recording.hold) {
                 RecordingBar(recording, onCancel = onVoiceCancel, onStop = onVoiceStop)
                 return@Column
@@ -182,7 +188,7 @@ fun Composer(
             if (recording != null) RecordingBar(recording, onCancel = onVoiceCancel, onStop = onVoiceStop)
             else Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp)) {
                 if (value.text.isEmpty()) {
-                    Text(if (transcribing) "Transcrevendo…" else "Mensagem", style = MaterialTheme.typography.bodyLarge, color = c.text3,
+                    Text(if (transcribing) "Transcrevendo…" else placeholder, style = MaterialTheme.typography.bodyLarge, color = c.text3,
                         modifier = if (transcribing) Modifier.pulsing() else Modifier)
                 }
                 BasicTextField(
@@ -205,7 +211,8 @@ fun Composer(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (recording != null) Spacer(Modifier.weight(1f)) else RoundIcon(Icons.Rounded.Add, "Anexar", onClick = onAttach)
-                if (recording == null) {
+                if (recording == null && !showModelRow) Spacer(Modifier.weight(1f))
+                if (recording == null && showModelRow) {
                 // Modelo e estilo ficam à mão, sem poluir: um toque abre as opções.
                 Row(
                     Modifier

@@ -576,6 +576,9 @@ fun AttachSheet(
     onFile: () -> Unit,
     onSwitchToVision: () -> Unit,
     onDismiss: () -> Unit,
+    /** null = o PC não gera imagens (Companion antigo ou desligado). */
+    onCreateImage: (() -> Unit)? = null,
+    createImageNote: String? = null,
 ) {
     val c = Noc.colors
     NocSheet(onDismiss) {
@@ -600,6 +603,9 @@ fun AttachSheet(
         SheetAction(Icons.Rounded.PhotoLibrary, "Galeria", "Fotos e capturas de tela (até 6)", enabled = visionEnabled) { onGallery(); onDismiss() }
         SheetAction(Icons.Rounded.ContentPaste, "Colar imagem", "Da área de transferência", enabled = visionEnabled) { onPaste(); onDismiss() }
         SheetAction(Icons.AutoMirrored.Rounded.Notes, "Arquivo de texto ou código", "TXT, MD, CSV, JSON, código-fonte… até 400 KB") { onFile(); onDismiss() }
+        if (onCreateImage != null) {
+            SheetAction(Icons.Rounded.AutoAwesome, "Criar imagem", createImageNote ?: "Descreva e o seu PC cria (Z-Image, FLUX)") { onCreateImage(); onDismiss() }
+        }
         Text(
             "As imagens vão cifradas direto para o seu PC e são analisadas lá. Nada passa por serviços externos.",
             style = MaterialTheme.typography.bodySmall, color = c.text3, modifier = Modifier.padding(horizontal = 22.dp, vertical = 10.dp),

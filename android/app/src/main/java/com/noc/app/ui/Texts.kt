@@ -109,6 +109,17 @@ object Texts {
         }
     }
 
+    /** Erro de imagem sem texto do PC (o PC normalmente já manda a explicação pronta). */
+    fun imageError(code: String?): String = when (code) {
+        "model_not_installed" -> "O modelo de imagem ainda não está instalado no PC. Veja em Modelos → Imagem."
+        "vram_insufficient", "oom" -> "Não havia VRAM suficiente para esta configuração. Ajustamos os recursos e você pode tentar novamente."
+        "image_off" -> "A geração de imagens está desligada no Companion do PC."
+        "job_unknown", "interrupted" -> "A geração foi interrompida no PC."
+        "not_connected" -> "Sem conexão com o PC."
+        "busy" -> "A fila do PC está cheia. Tente de novo em instantes."
+        else -> "Não foi possível criar a imagem no PC."
+    }
+
     private val ptBR = Locale("pt", "BR")
 
     fun relative(ms: Long, now: Long = System.currentTimeMillis()): String {

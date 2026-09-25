@@ -102,6 +102,9 @@
                 <RadioButton Style="{StaticResource NavItem}" AutomationProperties.Name="Modelos" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=models}">
                     <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE8F1;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Modelos" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
                 </RadioButton>
+                <RadioButton Style="{StaticResource NavItem}" AutomationProperties.Name="Imagens" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=images}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE91B;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Imagens" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
+                </RadioButton>
                 <RadioButton Style="{StaticResource NavItem}" AutomationProperties.Name="Dispositivos" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=devices}">
                     <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE8EA;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Dispositivos" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
                 </RadioButton>
@@ -391,6 +394,92 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Imagens (motor de imagem local) -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=images}">
+                <StackPanel Margin="28,44,36,32">
+                    <Grid>
+                        <StackPanel>
+                            <TextBlock Text="Imagens" Style="{StaticResource Display}"/>
+                            <TextBlock Text="O celular pede, este PC cria. Os modelos rodam na sua GPU e o Noc cuida de instalar, otimizar e dividir a VRAM com os modelos de conversa." Style="{StaticResource Body}" Margin="0,4,230,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <Button Style="{StaticResource Secondary}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Height="38" Content="Abrir pasta das imagens" Command="{Binding OpenImageFolder}"/>
+                    </Grid>
+
+                    <Border Style="{StaticResource Tile}" Margin="0,22,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="STATUS" Style="{StaticResource Label}"/>
+                                <TextBlock Text="{Binding ImageStatus}" Style="{StaticResource Title}" Margin="0,8,0,0"/>
+                                <TextBlock Text="{Binding ImageDetail}" Style="{StaticResource Body}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding ImageUsage}" Style="{StaticResource Mono}" Margin="0,5,0,0"/>
+                            </StackPanel>
+                            <CheckBox Grid.Column="1" Style="{StaticResource Switch}" VerticalAlignment="Top" IsChecked="{Binding ImagesEnabled}" AutomationProperties.Name="Geração de imagens ligada"/>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="MODELOS" Style="{StaticResource Label}" Margin="4,26,0,10"/>
+                    <ItemsControl ItemsSource="{Binding ImageModels}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource Tile}" Margin="0,0,0,12">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Name}" Style="{StaticResource Title}"/>
+                                                <TextBlock Text="{Binding Role}" Style="{StaticResource Body}" Foreground="{DynamicResource Accent}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                                <Ellipse Style="{StaticResource Dot}" Fill="{Binding StatusColor}"/>
+                                                <TextBlock Text="{Binding Status}" Style="{StaticResource Body}" Margin="8,0,0,0"/>
+                                            </StackPanel>
+                                            <ProgressBar Value="{Binding Progress, Mode=OneWay}" Maximum="1" Height="4" Margin="0,8,40,0" Foreground="{DynamicResource Accent}" Background="{DynamicResource Surface3}" BorderThickness="0"
+                                                         Visibility="{Binding ShowProgress, Converter={StaticResource Vis}}"/>
+                                            <TextBlock Text="{Binding Detail}" Style="{StaticResource Mono}" Margin="0,6,0,0" TextWrapping="Wrap" Visibility="{Binding Detail, Converter={StaticResource TextVis}}"/>
+                                            <StackPanel Visibility="{Binding NeedsToken, Converter={StaticResource Vis}}" Margin="0,12,0,0">
+                                                <TextBlock Style="{StaticResource Body}" TextWrapping="Wrap" Margin="0,0,40,0"
+                                                           Text="O FLUX.1 Dev tem termos próprios. Para liberar: 1) entre na sua conta do Hugging Face e aceite os termos na página do modelo; 2) crie um token de leitura e cole em Conta do Hugging Face, abaixo. O download começa sozinho."/>
+                                                <Button Style="{StaticResource Ghost}" HorizontalAlignment="Left" Margin="-10,4,0,0" Content="Abrir a página do modelo" Command="{Binding DataContext.OpenUrl, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding LicenseUrl}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource Ghost}" Content="{Binding SecondaryAction}" Visibility="{Binding SecondaryAction, Converter={StaticResource TextVis}}"
+                                                    Command="{Binding DataContext.ImageSecondary, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Id}"/>
+                                            <Button Style="{StaticResource Primary}" Content="{Binding Action}" Height="34" Padding="16,0" Margin="6,0,0,0" Visibility="{Binding Action, Converter={StaticResource TextVis}}"
+                                                    Command="{Binding DataContext.ImageAction, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Id}"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Text="CONTA DO HUGGING FACE" Style="{StaticResource Label}" Margin="4,14,0,10"/>
+                    <Border Style="{StaticResource Tile}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding HfLine}" Style="{StaticResource Title}"/>
+                            <TextBlock Text="Só é usada para baixar modelos com termos próprios (FLUX.1 Dev). O token fica cifrado neste PC e nunca vai para o celular nem para o relay." Style="{StaticResource Body}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                            <Grid Margin="0,12,0,0" Visibility="{Binding HfConnected, Converter={StaticResource Not}}">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBox Style="{StaticResource Field}" Text="{Binding HfTokenInput, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Token do Hugging Face"/>
+                                <Button Grid.Column="1" Style="{StaticResource Primary}" Content="Conectar" Height="38" Padding="16,0" Margin="8,0,0,0" Command="{Binding SaveHfToken}"/>
+                            </Grid>
+                            <Button Style="{StaticResource Ghost}" HorizontalAlignment="Left" Margin="-10,8,0,0" Content="Desconectar" Command="{Binding DisconnectHf}" Visibility="{Binding HfConnected, Converter={StaticResource Vis}}"/>
+                            <TextBlock Text="{Binding HfMessage}" Style="{StaticResource Body}" Margin="0,8,0,0" Visibility="{Binding HfMessage, Converter={StaticResource TextVis}}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="LOCAL" Style="{StaticResource Label}" Margin="4,26,0,10"/>
+                    <Border Style="{StaticResource Tile}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding ImageRoot}" Style="{StaticResource Mono}"/>
+                            <TextBlock Text="Modelos, otimizações e imagens ficam todos nesta pasta. Nada é enviado para fora: prompts e imagens ficam no seu PC e no seu celular." Style="{StaticResource Body}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </ScrollViewer>
 

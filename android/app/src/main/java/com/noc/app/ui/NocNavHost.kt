@@ -48,7 +48,8 @@ object Routes {
     const val PAIR = "pair?link={link}"
     const val SETUP_CHECK = "setup-check"
     const val HOME = "home"
-    const val CHAT = "chat/{id}?draft={draft}&preset={preset}&msg={msg}"
+    const val CHAT = "chat/{id}?draft={draft}&preset={preset}&msg={msg}&img={img}"
+    const val CREATIONS = "creations"
     const val HISTORY = "history"
     const val MODELS = "models"
     const val PRESETS = "presets"
@@ -64,8 +65,9 @@ object Routes {
     const val VOICE = "voice"
     const val NOTIFICATIONS = "notifications"
 
-    fun chat(id: String, draft: String? = null, preset: String? = null, msg: String? = null): String {
-        val q = listOfNotNull(draft?.let { "draft=" + Uri.encode(it) }, preset?.let { "preset=" + Uri.encode(it) }, msg?.let { "msg=" + Uri.encode(it) })
+    fun chat(id: String, draft: String? = null, preset: String? = null, msg: String? = null, image: Boolean = false): String {
+        val q = listOfNotNull(draft?.let { "draft=" + Uri.encode(it) }, preset?.let { "preset=" + Uri.encode(it) }, msg?.let { "msg=" + Uri.encode(it) },
+            "img=true".takeIf { image })
         return "chat/$id" + if (q.isEmpty()) "" else "?" + q.joinToString("&")
     }
 
@@ -106,6 +108,7 @@ fun NocNavHost(container: AppContainer, prefs: AppPrefs, incoming: MutableStateF
                 "models" -> nav.navigate(Routes.MODELS) { launchSingleTop = true }
                 "activity" -> nav.navigate(Routes.ACTIVITY) { launchSingleTop = true }
                 "status" -> nav.navigate(Routes.STATUS) { launchSingleTop = true }
+                "creations" -> nav.navigate(Routes.CREATIONS) { launchSingleTop = true }
             }
             null -> Unit
         }
@@ -165,6 +168,7 @@ fun NocNavHost(container: AppContainer, prefs: AppPrefs, incoming: MutableStateF
                 navArgument("draft") { type = NavType.StringType; nullable = true; defaultValue = null },
                 navArgument("preset") { type = NavType.StringType; nullable = true; defaultValue = null },
                 navArgument("msg") { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument("img") { type = NavType.BoolType; defaultValue = false },
             ),
         ) { entry ->
             ChatScreen(
@@ -175,8 +179,10 @@ fun NocNavHost(container: AppContainer, prefs: AppPrefs, incoming: MutableStateF
                 initialPreset = entry.arguments?.getString("preset"),
                 nav = nav,
                 initialMessageId = entry.arguments?.getString("msg"),
+                startImageMode = entry.arguments?.getBoolean("img") == true,
             )
         }
+        composable(Routes.CREATIONS) { com.noc.app.ui.image.CreationsScreen(container, nav) }
         composable(Routes.HISTORY) { HistoryScreen(container, nav) }
         composable(Routes.MODELS) { ModelsScreen(container, onBack = { nav.popBackStack() }) }
         composable(Routes.ACTIVITY) { com.noc.app.ui.activity.ActivityScreen(container, nav) }

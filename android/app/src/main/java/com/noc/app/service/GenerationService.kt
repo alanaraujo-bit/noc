@@ -67,7 +67,7 @@ class GenerationService : Service() {
             val prefs = container.prefs.current()
             val online = container.connection.state.value is ConnState.Online
             // atualiza quando a etapa muda; a contagem de tokens no máximo a cada 5 s
-            val key = tasks.joinToString("|") { "${it.messageId}:${it.phase}:${it.detached}:${it.ahead}:${(it.upload ?: 0f).times(10).toInt()}" } + "|$op|$online"
+            val key = tasks.joinToString("|") { "${it.messageId}:${it.phase}:${it.detached}:${it.ahead}:${(it.upload ?: 0f).times(10).toInt()}:${((it.imageProgress ?: 0f) * 20).toInt()}:${((it.stageProgress ?: 0.0) * 20).toInt()}" } + "|$op|$online"
             val now = System.currentTimeMillis()
             val tokensDue = tasks.any { it.phase == LiveReply.Phase.GENERATING } && now - lastTokensAt > 5_000
             if ((key != lastKey || tokensDue) && prefs.notifyProgress && engine.notifier.canNotify()) {

@@ -71,6 +71,42 @@ data class MessageEntity(
     val reasoningMs: Long? = null,
     /** Nome amigável do modelo que respondeu, gravado na hora (o modelo pode mudar de nome ou sumir depois). */
     val modelName: String? = null,
+    /** null = texto; "image" = imagem gerada no PC; "image_request" = pedido de imagem do usuário. */
+    val kind: String? = null,
+    /** ImageJob em JSON (pedido, imagens prontas, prompt final, tempos). */
+    val imageJson: String? = null,
+)
+
+/**
+ * Uma imagem criada no PC e guardada neste celular (Criações). O arquivo original fica em files/creations/<id>.png,
+ * fora do cache: não some quando o Android limpa espaço. O PC também guarda o original, para baixar de novo.
+ */
+@Entity(tableName = "creations", indices = [Index("createdAt"), Index("conversationId"), Index("messageId")])
+data class CreationEntity(
+    @PrimaryKey val id: String,
+    val conversationId: String?,
+    val messageId: String?,
+    val jobId: String?,
+    val pcId: String?,
+    val prompt: String,
+    val finalPrompt: String?,
+    val model: String,
+    val modelName: String,
+    val width: Int,
+    val height: Int,
+    val steps: Int?,
+    val guidance: Double?,
+    val seed: Long?,
+    val format: String?,
+    val quality: String?,
+    val createdAt: Long,
+    val genMs: Long? = null,
+    val bytes: Long = 0,
+    val sha256: String? = null,
+    /** Caminho do PNG original (null = ainda baixando). */
+    val path: String? = null,
+    val thumbPath: String? = null,
+    val favorite: Boolean = false,
 )
 
 @Entity(tableName = "presets")

@@ -33,7 +33,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Settings
@@ -104,6 +106,7 @@ fun HomeScreen(container: AppContainer, prefs: AppPrefs, nav: NavHostController)
             Wordmark()
             Spacer(Modifier.weight(1f))
             if (liveIds.isNotEmpty()) com.noc.app.ui.components.TaskPill(liveIds.size) { nav.navigate(Routes.ACTIVITY) }
+            IconAction(Icons.Rounded.PhotoLibrary, "Criações") { nav.navigate(Routes.CREATIONS) }
             IconAction(Icons.Rounded.History, "Conversas") { nav.navigate(Routes.HISTORY) }
             IconAction(Icons.Rounded.Settings, "Ajustes") { nav.navigate(Routes.SETTINGS) }
         }
@@ -157,6 +160,17 @@ fun HomeScreen(container: AppContainer, prefs: AppPrefs, nav: NavHostController)
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            if (container.chat.images.supported()) item(key = "images") {
+                val creations by container.db.creations().observeCount().collectAsState(initial = 0)
+                Column {
+                    SectionLabel("Imagens")
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Chip("Criar imagem", icon = Icons.Rounded.AutoAwesome) { nav.navigate(Routes.chat(Routes.NEW, image = true)) }
+                        if (creations > 0) Chip("Criações · $creations", icon = Icons.Rounded.PhotoLibrary) { nav.navigate(Routes.CREATIONS) }
                     }
                 }
             }
