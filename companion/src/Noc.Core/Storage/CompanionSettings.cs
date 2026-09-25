@@ -49,19 +49,31 @@ public sealed class CompanionSettings
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
     };
 
+    private static string Backup => AppPaths.Settings + ".bak";
+
     public static CompanionSettings Load()
     {
-        try
+        // arquivo corrompido (ex.: queda de energia): usa a cópia anterior; sem nenhuma, os padrões — sem derrubar o app
+        foreach (var path in new[] { AppPaths.Settings, Backup })
         {
-            if (File.Exists(AppPaths.Settings))
-                return JsonSerializer.Deserialize<CompanionSettings>(File.ReadAllText(AppPaths.Settings)) ?? new();
-        }
-        catch (Exception)
-        {
-            // Arquivo corrompido: volta aos padrões sem derrubar o app.
+            try
+            {
+                if (File.Exists(path) && JsonSerializer.Deserialize<CompanionSettings>(File.ReadAllText(path)) is { } s) return s;
+            }
+            catch (Exception) { }
         }
         return new CompanionSettings();
     }
 
-    public void Save() => AppPaths.WriteAtomic(AppPaths.Settings, JsonSerializer.SerializeToUtf8Bytes(this, Json));
+    public void Save()
+    {
+        // a versão anterior (válida) fica como cópia de segurança
+        try
+        {
+            if (File.Exists(AppPaths.Settings) && JsonSerializer.Deserialize<CompanionSettings>(File.ReadAllText(AppPaths.Settings)) is not null)
+                File.Copy(AppPaths.Settings, Backup, overwrite: true);
+        }
+        catch (Exception) { }
+        AppPaths.WriteAtomic(AppPaths.Settings, JsonSerializer.SerializeToUtf8Bytes(this, Json));
+    }
 }

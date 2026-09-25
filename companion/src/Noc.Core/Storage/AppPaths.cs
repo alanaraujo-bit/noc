@@ -29,11 +29,18 @@ public static class AppPaths
     public static string SecurityLog => Path.Combine(Root, "security.log");
     public static string ActivityLog => Path.Combine(Root, "activity.log");
 
-    /// <summary>Escrita atômica: grava num temporário e troca, para nunca deixar arquivo pela metade.</summary>
+    /// <summary>
+    /// Escrita atômica e durável: grava num temporário, força os dados para o disco e só então troca.
+    /// Sem o flush, uma queda de energia logo depois da troca deixa o arquivo cheio de zeros (visto de verdade).
+    /// </summary>
     public static void WriteAtomic(string path, byte[] data)
     {
         var tmp = path + ".tmp";
-        File.WriteAllBytes(tmp, data);
+        using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        {
+            fs.Write(data);
+            fs.Flush(flushToDisk: true);
+        }
         File.Move(tmp, path, overwrite: true);
     }
 }
