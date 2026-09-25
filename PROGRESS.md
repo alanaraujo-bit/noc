@@ -159,3 +159,15 @@
 - G (Parar pela notificação): cancelou no PC em 26 ms ✔
 - C (Wi-Fi→dados→Wi-Fi): reassinou a mesma tarefa duas vezes, terminou ✔ — BUG corrigido: o laço principal apagava a sessão nova
   logo depois da troca de rede (corrida), deixando o app "conectado" sem sessão.
+- H (Companion morto no meio): diário recuperado, continuação do ponto, celular reassinou; BUG corrigido: o diário ficava
+  alguns segundos atrás do que o celular já tinha visto → numeração repetida e texto duplicado. Agora a recuperação pula a
+  sequência (+10000) e manda um "retrato" completo (reset + texto) antes de continuar. Teste E2E cobre (reassina do último seq).
+- BUG corrigido: títulos automáticos (tarefas de fundo) trocavam de modelo (20–36 s cada troca). Agora tarefas de fundo usam o
+  modelo carregado e ficam atrás das do usuário. Teste E2E: Background_job_never_swaps_models.
+- BUG corrigido: item da conversa ficava "gerando" depois do fim (Compose pulava a recomposição). Agora o item depende de liveIds
+  e o status final do banco manda.
+- F (duas conversas): "Gerando" + "Na fila · 1 tarefa antes desta" na Atividade ✔
+- J (imagem com a tela bloqueada, Gemma): envio, troca de modelo, análise e notificação com a tela apagada ✔
+- E (tarefa longa, Profundo 27B): 268 s com a tela bloqueada, "Qwen 3.8 27B terminou · em 268 s" ✔
+- Benchmark real (Companion): Qwen 3.5 9B 106,2 tok/s, 1º token 89 ms, carga 7,5 s, leitura 3645 tok/s (7272 tokens), visão ok.
+- Companion (janela): página Modelos, voz na visão geral, novos ajustes. Diagnóstico do celular: perfis, visão, voz, notificações.

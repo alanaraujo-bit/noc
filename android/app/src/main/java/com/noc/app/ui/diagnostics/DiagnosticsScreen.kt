@@ -89,6 +89,7 @@ fun DiagnosticsScreen(container: AppContainer, nav: NavHostController) {
         listOf(
             "Internet no celular", "Serviço de conexão remota", "PC online", "Companion respondendo",
             "Autenticação", "LM Studio", "Modelo", "Rede local", "Geração de teste",
+            "Perfis e modelos", "Imagens (visão)", "Ditado por voz", "Notificações",
         ).forEach { items.add(Item(it)) }
         scope.launch {
             val cm = container.connection
@@ -153,7 +154,8 @@ fun DiagnosticsScreen(container: AppContainer, nav: NavHostController) {
                 else -> { set(3, St.FAIL, "Tempo esgotado", "O PC não respondeu em 20 s."); set(4, St.SKIP) }
             }
             if (state !is ConnState.Online) {
-                (5 until items.size).forEach { set(it, St.SKIP) }
+                (5 until items.size - 1).forEach { set(it, St.SKIP) }
+                if (container.chat.notifier.canNotify()) set(items.size - 1, St.OK) else set(items.size - 1, St.WARN, "Bloqueadas")
                 running = false
                 return@launch
             }
@@ -179,6 +181,7 @@ fun DiagnosticsScreen(container: AppContainer, nav: NavHostController) {
             set(7, St.RUN)
             when {
                 state.route == Route.LAN -> set(7, St.OK, "Conectado direto pela Wi-Fi")
+                container.prefs.current().forceRelay -> set(7, St.WARN, "Conexão remota forçada nos Ajustes", "Desligue “Sempre usar conexão remota” em Ajustes para usar a Wi-Fi direta em casa.")
                 !cm.onWifiLike() -> set(7, St.SKIP, "Fora da Wi-Fi: usando conexão remota cifrada")
                 pc.lanEndpoints.isEmpty() -> set(7, St.WARN, "PC sem endereço local conhecido")
                 else -> set(7, St.WARN, "Em outra rede ou bloqueado pelo firewall", "Se estiver na mesma Wi-Fi, permita o Noc Companion no Firewall do Windows (redes privadas). O remoto continua funcionando.")
@@ -203,6 +206,39 @@ fun DiagnosticsScreen(container: AppContainer, nav: NavHostController) {
                     ).joinToString(" · "))
                 }.onFailure { set(8, St.FAIL, "O teste não terminou", "Veja se o PC não está sobrecarregado e tente de novo.") }
             } else set(8, St.SKIP)
+            // 10. perfis: cada um com modelo, sem erro de carga
+            set(9, St.RUN)
+            val fresh = cm.models.value
+            val tierIssues = com.noc.app.core.net.Tier.all.mapNotNull { t ->
+                val key = status?.tiers?.get(t)?.model ?: return@mapNotNull "${com.noc.app.core.net.Tier.label(t)} sem modelo"
+                val m = fresh.firstOrNull { it.key == key } ?: return@mapNotNull "${com.noc.app.core.net.Tier.label(t)}: modelo não encontrado no PC"
+                m.lastError?.let { "${com.noc.app.core.net.Tier.label(t)} (${m.name}): $it" }
+                    ?: if (m.fitsGpu == false) "${com.noc.app.core.net.Tier.label(t)} (${m.name}): não cabe na GPU" else null
+            }
+            when {
+                !(state.pc.has("tiers")) -> set(9, St.WARN, "Companion antigo", "Atualize o Noc Companion no PC para ter perfis, imagens e voz.")
+                tierIssues.isEmpty() -> set(9, St.OK, status?.tiers?.values?.joinToString(" · ") { it.name })
+                else -> set(9, St.WARN, tierIssues.joinToString("\n"), "Abra Modelos para escolher outro modelo ou ver o detalhe do erro.")
+            }
+            // 11. visão
+            set(10, St.RUN)
+            val visionModels = fresh.filter { it.isLlm && it.vision && it.fitsGpu != false }
+            if (visionModels.isNotEmpty()) set(10, St.OK, visionModels.joinToString(" · ") { it.name })
+            else set(10, St.WARN, "Nenhum modelo com visão", "Baixe um modelo com visão (ex.: Qwen 3.5 VL, Gemma 4) no LM Studio ou coloque o GGUF e o mmproj no Downloads: o Companion adiciona sozinho.")
+            // 12. voz
+            set(11, St.RUN)
+            val stt = status?.stt
+            when {
+                !container.voice.hasPermission() -> set(11, St.WARN, "Sem permissão do microfone", "Toque no microfone numa conversa e permita o acesso.")
+                stt == null || stt.state == "off" -> set(11, St.WARN, "Desligado no PC", "Ative “Ditado por voz” nos Ajustes do Noc Companion.")
+                stt.state == "ready" -> set(11, St.OK, "Transcrição pronta no PC")
+                stt.state == "failed" -> set(11, St.FAIL, stt.error ?: "Transcrição indisponível", "Reinicie o Noc Companion no PC.")
+                else -> set(11, St.WARN, "Preparando no PC" + (stt.progress?.let { " · ${(it * 100).toInt()}%" } ?: ""))
+            }
+            // 13. notificações
+            set(12, St.RUN)
+            if (container.chat.notifier.canNotify()) set(12, St.OK, "Avisamos quando uma resposta terminar")
+            else set(12, St.WARN, "Bloqueadas", "Permita as notificações do Noc para saber quando uma resposta fica pronta com o app fechado.")
             running = false
         }
     }
