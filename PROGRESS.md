@@ -88,3 +88,32 @@
 - Ainda NÃO validados na UI (código existe): pastas/arquivar-swipe/duplicar/exportar no histórico, criação de perfil/prompt e
   fluxo "Escolher da biblioteca", anexo de texto, carregar/descarregar modelo pelo celular, revogar no PC → celular,
   force-stop no meio da geração, Doze, conversa gigante (e a recarga do Room a cada 700 ms no streaming), troca entre 2 PCs.
+
+---
+# FASE 2 — Multimodalidade, modelos, voz, tarefas em segundo plano (iniciada 2026-09-25)
+
+## Sondagens (de-risk) — resultados reais
+- Importação: hard link para ~/.lmstudio/models/local/<Nome>-GGUF/ (sem cópia, sem mexer no Downloads). LM Studio indexa sozinho em ~3 s.
+  mmproj na MESMA pasta do modelo => capabilities.vision=true (Gemma 4 confirmado).
+- Qwen3.5-9B-abliterated-vision (Downloads) é um GGUF fora do padrão: rope.dimension_sections com 3 itens (llama.cpp quer 4),
+  head_count_kv em array, tensor blk.N.ssm_dt sem ".bias", e 441 tensores de visão/MTP embutidos com nomes HF (v.*, mtp.*).
+  LM Studio falhava ("Failed to load model"). REPARO validado: cópia saneada (pad 4, escalar, renomeia ssm_dt->ssm_dt.bias,
+  remove v.*/mtp.*) + mmproj oficial lmstudio-community/Qwen3.5-9B-GGUF (sha256 conferido, projection_dim 4096 = embedding).
+  Resultado: carrega em 18 s, 8,9 GB VRAM @32k, 111 tok/s, lê a imagem de teste perfeitamente.
+- Gemma 4 26B-A4B + mmproj: 34 s para carregar, 20,7 GB @32k, ~120 tok/s, visão correta.
+- REST /api/v1/models/load valida chaves estritamente: aceita context_length, flash_attention, offload_kv_cache_to_gpu,
+  parallel, speculative_draft_mtp, echo_load_config. NÃO aceita gpu, ttl. Cargas pela API não têm TTL.
+- `lms load <key> --estimate-only -c N -y` dá a estimativa oficial de VRAM (Gemma 32k 19,85 GiB; Qwen27B 32k 21,02 GiB; 64k 24,74).
+- LM Studio NÃO tem API HTTP de transcrição. STT próprio: Whisper.net 1.9.1 + runtime Vulkan (CUDA runtime exige toolkit: falha),
+  ggml-large-v3-turbo-q8_0 (874 MB). 200–650 ms por frase depois do aquecimento (1ª inferência ~10 s: compilar shaders).
+  PT-BR excelente: "VLAN 102 na porta 2 do MikroTik… 24 como trunk", "C# usando HttpClient", ruído e voz baixa OK.
+  Silêncio devolve "." → precisa de porta de energia + filtro de frases-fantasma.
+- Fixtures em scratchpad: fixture-vision.png, vlan/csharp/long/noisy/quiet/silence.wav (gerados com SAPI pt-BR).
+
+## Decisões da fase 2
+- Marca continua "Noc" (o usuário renomeou explicitamente; "AIONIX AI" do texto é exemplo).
+- "Perfis" passam a ser Rápido/Inteligente/Profundo (níveis de modelo, guardados no PC). Os antigos "perfis"
+  (Programação, Pesquisa…) viram "Estilos" na interface.
+- O PC é a fonte da verdade de modelos/perfis/tarefas; o celular é interface e cache.
+- STT roda no PC (GPU), áudio vai cifrado pelo mesmo canal E2E; nada de nuvem.
+- Compatibilidade: welcome anuncia "features"; app novo degrada com Companion antigo e vice-versa. Room: migrações reais.
