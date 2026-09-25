@@ -176,7 +176,9 @@ fun AssistantMessage(
     onLeaveHintShown: () -> Unit = {},
 ) {
     val m = ui.entity
-    val liveState = live?.collectAsState()?.value
+    // o banco é a verdade quando a resposta já terminou (o estado ao vivo pode ainda não ter sido solto)
+    val finalStatus = m.status != MessageStatus.WAITING && m.status != MessageStatus.STREAMING
+    val liveState = live?.collectAsState()?.value?.takeUnless { finalStatus }
     val content = liveState?.content ?: m.content
     val reasoning = liveState?.reasoning ?: m.reasoning.orEmpty()
     val streaming = liveState != null

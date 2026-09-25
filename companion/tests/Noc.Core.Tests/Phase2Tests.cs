@@ -80,6 +80,29 @@ public class Phase2Tests(ITestOutputHelper log)
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TestClient, List<JsonObject>> Stashes = new();
 
+    /** Coleta a partir de um ponto, com o texto que o "celular" já tinha. */
+    private static async Task<(string Content, string Reasoning, JsonObject End, List<JsonObject> Events)> CollectFrom(TestClient c, string job, int fromSeq, string had, TimeSpan max)
+    {
+        var content = new StringBuilder(had);
+        var events = new List<JsonObject>();
+        var lastSeq = fromSeq;
+        var deadline = DateTime.UtcNow + max;
+        while (true)
+        {
+            var evt = await c.Events.Reader.ReadAsync().AsTask().WaitAsync(deadline - DateTime.UtcNow);
+            if (evt["e"]!.GetValue<string>() != "job") continue;
+            var d = evt["d"]!.AsObject();
+            if (d["job"]!.GetValue<string>() != job) continue;
+            var seq = d["seq"]!.GetValue<int>();
+            if (seq <= lastSeq) continue;
+            lastSeq = seq;
+            events.Add(d);
+            if (d["reset"] is not null) content.Clear();
+            if (d["c"] is { } cc) content.Append(cc.GetValue<string>());
+            if (d["end"] is JsonObject end) return (content.ToString(), "", end, events);
+        }
+    }
+
     private static JsonObject UserText(string text) => new() { ["role"] = "user", ["content"] = text };
 
     [Fact]
@@ -326,9 +349,13 @@ public class Phase2Tests(ITestOutputHelper log)
 
         await using var host2 = await EndToEndTests.StartHostAsync(remote: false, root);
         await using var c2 = await TestClient.ConnectAsync($"ws://127.0.0.1:{host2.Lan.Port}/v1/ws", HandshakeMode.Session, th => TestClient.SessionAuth(th, device));
-        var sub = await c2.CallAsync("chat.subscribe", new JsonObject { ["job"] = job, ["from"] = 0 });
+        // como o celular: continua do último evento que viu (o diário do PC pode estar atrás disso)
+        var sub = await c2.CallAsync("chat.subscribe", new JsonObject { ["job"] = job, ["from"] = lastSeq });
         Assert.True(sub["ok"]!.GetValue<bool>(), sub.ToJsonString());
-        var (content, _, end, _) = await Collect(c2, job, TimeSpan.FromMinutes(5));
+        var (content, _, end, events) = await CollectFrom(c2, job, lastSeq, partial.ToString(), TimeSpan.FromMinutes(5));
+        Assert.Contains(events, e => e["reset"] is not null && e["seq"]!.GetValue<int>() > lastSeq);
+        var lines = content.Split((char)10).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        Assert.Equal(lines.Count, lines.Distinct().Count()); // nenhuma linha repetida
         log.WriteLine($"final ({end["reason"]}): {content.Replace('\n', ' ')}");
         Assert.Equal("stop", end["reason"]!.GetValue<string>());
         Assert.StartsWith(partial.ToString()[..20], content);
@@ -359,6 +386,31 @@ public class Phase2Tests(ITestOutputHelper log)
         Assert.Equal("stop", endA["reason"]!.GetValue<string>());
         // o modelo profundo nunca chegou a ser carregado
         Assert.False(p.Host.Models.Find("qwen3.8-27b-uncensored@q4_k_m")!.Loaded);
+    }
+
+    [Fact]
+    public async Task Background_job_never_swaps_models()
+    {
+        if (!Enabled) return;
+        await using var p = await PairedAsync();
+        var warm = Guid.NewGuid().ToString();
+        await p.Client.CallAsync("chat.start", new JsonObject
+        {
+            ["job"] = warm, ["model"] = "tier:fast", ["messages"] = new JsonArray(UserText("Diga oi.")),
+            ["params"] = new JsonObject { ["max_tokens"] = 10, ["reasoning"] = "off" },
+        }, TimeSpan.FromMinutes(3));
+        await Collect(p.Client, warm);
+        var title = Guid.NewGuid().ToString();
+        await p.Client.CallAsync("chat.start", new JsonObject
+        {
+            ["job"] = title, ["model"] = "gemma4-26b-a4b-uncensored", ["background"] = true,
+            ["messages"] = new JsonArray(UserText("Crie um título curto para: conversa sobre redes.")),
+            ["params"] = new JsonObject { ["max_tokens"] = 16, ["reasoning"] = "off" },
+        });
+        var (_, _, end, events) = await Collect(p.Client, title);
+        Assert.DoesNotContain(events, e => e["phase"]?.GetValue<string>() == "loading");
+        Assert.Equal("qwen3.5-9b-abliterated-vision", end["model"]!.GetValue<string>());
+        Assert.False(p.Host.Models.Find("gemma4-26b-a4b-uncensored")!.Loaded);
     }
 
     internal static byte[] WavPcm(byte[] wav)

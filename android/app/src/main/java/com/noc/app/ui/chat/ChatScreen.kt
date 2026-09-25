@@ -424,7 +424,7 @@ fun ChatScreen(
                                 if (prevName != null && name != null && name != prevName) ModelDivider(name)
                                 AssistantMessage(
                                     ui = ui,
-                                    live = container.chat.liveFlow(m.id),
+                                    live = if (m.id in liveIds) container.chat.liveFlow(m.id) else null,
                                     isLast = idx == 0,
                                     online = online,
                                     showStats = prefs.showStats,

@@ -63,6 +63,8 @@ public sealed class ChatJob
     internal DateTimeOffset LastActivity { get; set; } = DateTimeOffset.Now;
     internal bool CancelRequested { get; set; }
     internal DateTimeOffset LastCheckpoint { get; set; } = DateTimeOffset.MinValue;
+    /// <summary>Tokens que já existiam quando esta rodada começou (a velocidade ao vivo conta só os novos).</summary>
+    internal int BaseTokens { get; set; }
 
     public bool IsFinished => State == JobState.Finished;
     public string Content { get { lock (_lock) return _content.ToString(); } }
@@ -101,7 +103,7 @@ public sealed class ChatJob
             if (FirstTokenMs is { } ft)
             {
                 var secs = (Clock.ElapsedMilliseconds - ft) / 1000.0;
-                if (secs > 0.25) LiveTokensPerSecond = Tokens / secs;
+                if (secs > 0.25) LiveTokensPerSecond = (Tokens - BaseTokens) / secs;
             }
         }
     }
@@ -122,11 +124,29 @@ public sealed class ChatJob
         Publish(e);
     }
 
+    /// <summary>
+    /// Depois de um reinício do Companion, o diário pode estar alguns segundos atrás do que o celular já viu.
+    /// Pula a numeração bem para frente e manda o texto completo que vale: o celular substitui a cópia dele.
+    /// </summary>
+    internal void Rebase(string why)
+    {
+        JsonObject e;
+        lock (_lock)
+        {
+            _seq += 10_000;
+            e = new JsonObject { ["reset"] = true, ["why"] = why, ["n"] = Tokens };
+            if (_reasoning.Length > 0) e["r"] = _reasoning.ToString();
+            if (_content.Length > 0) e["c"] = _content.ToString();
+        }
+        Publish(e);
+    }
+
     /// <summary>Recomeça do zero (antes de sair conteúdo): o celular descarta o raciocínio parcial.</summary>
-    internal void Reset(string why)
+    internal void Reset(string why, bool bumpSeq = false)
     {
         lock (_lock)
         {
+            if (bumpSeq) _seq += 10_000;
             _pendingR.Clear(); _pendingC.Clear(); _content.Clear(); _reasoning.Clear();
             Tokens = 0;
             FirstTokenMs = null;
@@ -408,7 +428,8 @@ public sealed class JobManager : IDisposable
             }
             job.Attempts++;
             Trace?.Invoke($"tarefa {Short(job.Id)} recuperada do diário (estava {(wasRunning ? "gerando" : "na fila")}, {job.Content.Length} caracteres prontos)");
-            if (job.Content.Length == 0 && job.Tokens > 0) job.Reset("pc_restarted");
+            if (job.Content.Length == 0 && job.Tokens > 0) job.Reset("pc_restarted", bumpSeq: true);
+            else if (wasRunning) job.Rebase("pc_restarted");
             Log?.Invoke(wasRunning ? "Retomando uma resposta interrompida pelo reinício do PC" : "Tarefa na fila restaurada após reinício", "task");
             job.SetPhase(JobState.Queued, "queued", new JsonObject { ["recovered"] = true });
             lock (_lock) _queue.Add(job);
@@ -491,13 +512,28 @@ public sealed class JobManager : IDisposable
     private void Pump()
     {
         var toStart = new List<ChatJob>();
+        // modelo que já está na GPU (tarefas de fundo nunca trocam de modelo: usam o que estiver carregado)
+        var loadedLlm = _models.Last.Models.FirstOrDefault(m => m.Loaded && m.Type == "llm")?.Key;
         lock (_lock)
         {
+            // o que a pessoa pediu vem antes de tarefas de fundo (títulos etc.), mantendo a ordem de chegada
+            var ordered = _queue.OrderBy(j => j.Background ? 1 : 0).ToList();
+            _queue.Clear();
+            _queue.AddRange(ordered);
             var running = _jobs.Values.Where(j => !j.IsFinished && j.State != JobState.Queued).ToList();
             var runningModel = running.FirstOrDefault()?.Model;
             var slots = _paused ? 0 : MaxParallelSameModel - running.Count;
             foreach (var j in _queue.ToList())
             {
+                if (j.Background)
+                {
+                    var target = runningModel ?? loadedLlm;
+                    if (target is not null && j.Model != target)
+                    {
+                        Trace?.Invoke($"tarefa de fundo {Short(j.Id)} usa {target} em vez de trocar de modelo");
+                        j.Model = target;
+                    }
+                }
                 if (slots <= 0) break;
                 // mesmo modelo que já está rodando (ou nada rodando): pode ir; outro modelo: espera a vez
                 if (runningModel is not null && j.Model != runningModel) break;
@@ -559,6 +595,8 @@ public sealed class JobManager : IDisposable
             }
             job.SetPhase(JobState.Preparing, "preparing", new JsonObject { ["context"] = ctx, ["images"] = job.Images, ["name"] = _models.DisplayName(job.Model) });
             job.Clock.Restart();
+            job.FirstTokenMs = null;
+            job.BaseTokens = job.Tokens;
             job.LastActivity = DateTimeOffset.Now;
             SaveToDisk(job);
             Changed?.Invoke();

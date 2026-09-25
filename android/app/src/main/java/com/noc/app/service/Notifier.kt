@@ -51,6 +51,8 @@ class Notifier(
     suspend fun onFinished(msg: MessageEntity, content: String, status: String, error: String?, stats: GenStats?) = withContext(Dispatchers.IO) {
         val p = prefs.current()
         if (!p.notifyWhenDone || !canNotify()) return@withContext
+        // parar foi decisão sua: não precisa de aviso
+        if (status == MessageStatus.CANCELLED) return@withContext
         val foreground = inForeground()
         // está olhando para essa conversa: a resposta aparece na tela, não precisa de aviso
         if (foreground && engine.visibleConversation.value == msg.conversationId) return@withContext

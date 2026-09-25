@@ -93,6 +93,7 @@ fun HomeScreen(container: AppContainer, prefs: AppPrefs, nav: NavHostController)
     val latency by container.connection.latencyMs.collectAsState()
     val recent by container.db.conversations().observeRecent(6).collectAsState(initial = null)
     val presets by container.db.presets().observeAll().collectAsState(initial = emptyList())
+    val liveIds by container.chat.liveIds.collectAsState()
     var startingLm by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().background(c.bg)) {
@@ -102,6 +103,7 @@ fun HomeScreen(container: AppContainer, prefs: AppPrefs, nav: NavHostController)
         ) {
             Wordmark()
             Spacer(Modifier.weight(1f))
+            if (liveIds.isNotEmpty()) com.noc.app.ui.components.TaskPill(liveIds.size) { nav.navigate(Routes.ACTIVITY) }
             IconAction(Icons.Rounded.History, "Conversas") { nav.navigate(Routes.HISTORY) }
             IconAction(Icons.Rounded.Settings, "Ajustes") { nav.navigate(Routes.SETTINGS) }
         }
@@ -141,9 +143,27 @@ fun HomeScreen(container: AppContainer, prefs: AppPrefs, nav: NavHostController)
                 )
             }
 
+            val tiers = status?.tiers.orEmpty()
+            if (tiers.isNotEmpty()) item(key = "tiers") {
+                Column {
+                    SectionLabel("Conversar com")
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.noc.app.core.net.Tier.all.forEach { t ->
+                            val info = tiers[t] ?: return@forEach
+                            Chip(com.noc.app.core.net.Tier.symbol(t) + " " + com.noc.app.core.net.Tier.label(t) + " · " + info.name) {
+                                scope.launch {
+                                    container.prefs.setLastChoice(com.noc.app.core.net.Tier.PREFIX + t)
+                                    nav.newChat()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (presets.isNotEmpty()) item(key = "quick") {
                 Column {
-                    SectionLabel("Começar com um perfil")
+                    SectionLabel("Começar com um estilo")
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         presets.forEach { p -> Chip(p.name, icon = presetIcon(p.icon)) { nav.newChat(presetId = p.id) } }
                     }
@@ -323,7 +343,7 @@ private fun OnlineBody(status: PcStatus?, startingLm: Boolean, onModels: () -> U
                 op?.kind == "loading" -> {
                     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
                     LaunchedEffect(op) { while (true) { delay(1000); now = System.currentTimeMillis() } }
-                    Text("Carregando ${op.model.substringBefore('@')}…", style = MaterialTheme.typography.titleMedium, color = c.text)
+                    Text("Carregando ${op.name ?: op.model.substringBefore('@')}…", style = MaterialTheme.typography.titleMedium, color = c.text)
                     op.since?.let { Text("${(now - it) / 1000} s", style = MonoSmall, color = c.text3) }
                 }
                 loaded != null -> {
@@ -342,13 +362,13 @@ private fun OnlineBody(status: PcStatus?, startingLm: Boolean, onModels: () -> U
         Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Modelos", tint = c.text3, modifier = Modifier.size(20.dp))
     }
 
-    AnimatedVisibility(status.jobs.isNotEmpty()) {
-        val j = status.jobs.firstOrNull()
+    AnimatedVisibility(status.tasks.isNotEmpty()) {
+        val j = status.tasks.firstOrNull()
         Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             StatusDot(c.accent, pulsing = true, size = 7.dp)
             Spacer(Modifier.width(10.dp))
             Text(
-                (if ((j?.state ?: "") == "loading") "Carregando para responder" else "Gerando resposta") +
+                (when (j?.phase) { "queued" -> "Na fila"; "loading", "starting" -> "Carregando para responder"; "preparing" -> "Lendo a conversa"; "thinking" -> "Pensando"; else -> "Gerando resposta" } + (if (status.tasks.size > 1) " · ${status.tasks.size} tarefas" else "")) +
                     (j?.tps?.let { " · %.0f tok/s".format(it) } ?: ""),
                 style = MaterialTheme.typography.bodyMedium, color = c.text2,
             )
