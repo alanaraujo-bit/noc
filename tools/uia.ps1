@@ -32,7 +32,7 @@ else {
         if (-not $name) {
             # botões com conteúdo composto: usa o texto do primeiro filho
             $child = $e.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $Invoke)))
-            if ($child -and ($e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button)) { $target = $e; break }
+            if ($child -and ($e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -or $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::RadioButton)) { $target = $e; break }
         }
         elseif ($name -eq $Invoke -and ($e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -or $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::RadioButton)) { $target = $e; break }
     }

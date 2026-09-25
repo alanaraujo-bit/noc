@@ -96,16 +96,16 @@
                 <TextBlock Text="{Binding Version}" Style="{StaticResource Mono}" Margin="0,2,0,0"/>
             </StackPanel>
             <StackPanel>
-                <RadioButton Style="{StaticResource NavItem}" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=overview}">
+                <RadioButton Style="{StaticResource NavItem}" AutomationProperties.Name="Visão geral" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=overview}">
                     <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE80F;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Visão geral" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
                 </RadioButton>
-                <RadioButton Style="{StaticResource NavItem}" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=devices}">
+                <RadioButton Style="{StaticResource NavItem}" AutomationProperties.Name="Dispositivos" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=devices}">
                     <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE8EA;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Dispositivos" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
                 </RadioButton>
-                <RadioButton Style="{StaticResource NavItem}" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=activity}">
+                <RadioButton Style="{StaticResource NavItem}" AutomationProperties.Name="Atividade" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=activity}">
                     <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE81C;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Atividade" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
                 </RadioButton>
-                <RadioButton Style="{StaticResource NavItem}" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=settings}">
+                <RadioButton Style="{StaticResource NavItem}" AutomationProperties.Name="Ajustes" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=settings}">
                     <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE713;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Ajustes" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
                 </RadioButton>
             </StackPanel>

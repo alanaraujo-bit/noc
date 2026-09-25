@@ -22,7 +22,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
         resourceConfigurations += listOf("pt-rBR", "pt")
         ksp { arg("room.schemaLocation", "$projectDir/schemas") }
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
