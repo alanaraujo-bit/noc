@@ -217,3 +217,30 @@ Testes com o APK de release (R8, com.noc.app 1.1.0) pareado ao Companion 1.1.0 i
 - FLUX.1 Dev: integrado e testado com um FLUX minúsculo público (mesma arquitetura); falta a autorização do usuário no Hugging Face.
 - Hardware: duas quedas abruptas do PC hoje sob carga de GPU (Kernel-Power 41; WHEA fatal às 14:54; reset do driver NVIDIA 153 às
   08:37 e 14:34; erros PCIe corrigidos desde 05/09). Escrita durável + cópia de segurança dos ajustes adicionadas depois disso.
+
+---
+# FASE 4 — SDXL Community Engine (iniciada 2026-09-25) · versão 1.3.0
+## Decisões
+- Backend: o worker Diffusers da Fase 3 foi estendido (não havia ComfyUI; Fooocus fora). Diffusers 0.40 cobre SDXL,
+  ControlNet Union, IP-Adapter e img2img/inpaint de Z-Image e FLUX. Dependências novas fixadas: peft 0.21 (LoRA),
+  opencv-python-headless 5.0 (bordas), scipy 1.18 (pose do ViTPose).
+- Checkpoints SDXL = UM arquivo .safetensors + pacote local de configs do SDXL base (stabilityai, revisão fixada).
+  Mesmo caminho para os 3 embutidos e para qualquer checkpoint importado.
+- Fontes (SHA-256 conferido): RealVisXL V5.0 fp16 (HF SG161222, openrail++), NoobAI XL V-Pred 1.0 (HF Laxhar, FAIPL-1.0-SD),
+  Pony V6 XL (Civitai versão 290640, FAIPL modificada: sem inferência monetizada), ControlNet Union ProMax (xinsir, Apache),
+  IP-Adapter Plus SDXL ViT-H + encoder ViT-H (h94, Apache), Grounding DINO tiny, Depth Anything V2 Small, ViTPose base,
+  RT-DETR r50 (Apache), Real-ESRGAN x4plus/x2plus/anime6B (BSD, .pth oficial com SHA-256 fixado → convertido 1x com
+  weights_only=True para .safetensors; o .pth nunca é executado).
+- Dev/testes rodam com NOC_IMAGE_HOST_TAG=dev: runtime-dev e tmp-dev próprios; só models/cache/outputs são compartilhados
+  com o Companion instalado (senão um regravaria o worker/ambiente do outro e mataria o worker do outro).
+## Sondagens reais (RTX 3090 Ti, bf16)
+- RealVisXL: carga 4-11 s, ~230 ms/passo @1MP, pico 8,9 GiB. DPM++ 2M SDE Karras 30 passos CFG 5: ótimo.
+- NoobAI: v-pred obrigatório (em epsilon vira ruído). Detecção pelo cabeçalho: chaves `v_pred`/`ztsnr`.
+- Pony: "clip skip 2" = padrão do diffusers (penúltima camada); clip_skip=1 gera borrões. Pony tem modelspec no cabeçalho.
+- BUG evitado: `from_pipe` converte tudo para float32 (VRAM dobrada, 2,5x mais lento) → pipelines derivados montados com os
+  mesmos componentes (derive_pipe).
+- BUG REAL corrigido (afetaria produção): com uma thread lendo o stdin (pipe síncrono do Windows), outra thread que carrega
+  o OpenBLAS do scipy trava até o próximo comando. O leitor agora usa PeekNamedPipe e nunca fica dentro do ReadFile.
+- Operações testadas no worker: variação (img2img), inpaint só da área (recorte ~1MP), outpaint (bordas esticadas +
+  inpaint), detail pass (Grounding DINO: rostos/mãos), upscale 2x (1,1 s), Alta Definição (ESRGAN + refino em blocos
+  1024 com sobreposição), ControlNet pose/profundidade/bordas, IP-Adapter, LoRA sem vazamento (base antes/depois idênticas).

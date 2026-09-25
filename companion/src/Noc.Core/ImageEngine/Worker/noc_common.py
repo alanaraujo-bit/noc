@@ -19,6 +19,11 @@ import secrets
 import threading
 import time
 import traceback
+import faulthandler
+
+# Diagnóstico (só desenvolvimento): NOC_WORKER_TRACE=N despeja as pilhas de todas as threads no stderr a cada N segundos.
+if os.environ.get("NOC_WORKER_TRACE"):
+    faulthandler.dump_traceback_later(int(os.environ["NOC_WORKER_TRACE"]), repeat=True, file=sys.__stderr__)
 import base64
 
 _send_lock = threading.Lock()
@@ -360,3 +365,22 @@ def te_to_fp8(module):
     apply_layerwise_casting(module, storage_dtype=FP8, compute_dtype=BF16, skip_modules_pattern=("norm", "embed", "shared"))
     free_cuda()
     return module
+
+
+def derive_pipe(cls, base, **extra):
+    """
+    Pipeline derivado (img2img, inpaint, ControlNet) com os MESMOS módulos do principal. Não usa from_pipe: ele converte
+    tudo para float32 por padrão (dobra a VRAM e deixa 2,5x mais lento — medido) e desfaria o fp8 por camada do FLUX.
+    """
+    import inspect as _inspect
+    accepted = set(_inspect.signature(cls.__init__).parameters)
+    comps = {k: v for k, v in base.components.items() if k in accepted}
+    comps.update({k: v for k, v in extra.items() if k in accepted})
+    for k in accepted:
+        if k not in comps and k not in ("self", "args", "kwargs"):
+            p = _inspect.signature(cls.__init__).parameters[k]
+            if p.default is _inspect.Parameter.empty:
+                comps[k] = None
+    pipe = cls(**comps)
+    pipe.set_progress_bar_config(disable=True)
+    return pipe

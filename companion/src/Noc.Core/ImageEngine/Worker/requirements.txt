@@ -35,6 +35,7 @@ regex==2026.9.10
 requests==2.34.2
 rich==15.0.0
 safetensors==0.8.0
+scipy==1.18.1
 sentencepiece==0.2.2
 setuptools==78.1.0
 shellingham==1.5.4

@@ -14,7 +14,7 @@ import time
 import torch
 from PIL import Image, ImageFilter, ImageOps
 
-from noc_common import send, log, WorkerError, free_cuda, fast_load, GiB  # noqa: F401
+from noc_common import send, log, WorkerError, free_cuda, fast_load, derive_pipe, GiB  # noqa: F401
 
 # Fatores latente -> RGB da VAE de 4 canais do SDXL (prévia instantânea sem decodificar a VAE).
 SDXL_LATENT_RGB = [[0.3651, 0.4232, 0.4341], [-0.2533, -0.0042, 0.1068], [0.1076, 0.1111, -0.0362], [-0.3165, -0.2492, -0.2188]]
@@ -462,11 +462,11 @@ class SdxlEngine:
             cls = {"txt2img": d.StableDiffusionXLControlNetUnionPipeline,
                    "img2img": d.StableDiffusionXLControlNetUnionImg2ImgPipeline,
                    "inpaint": d.StableDiffusionXLControlNetUnionInpaintPipeline}[op]
-            p = cls.from_pipe(self.pipe, controlnet=self.controlnet)
+            p = derive_pipe(cls, self.pipe, controlnet=self.controlnet)
         else:
             cls = {"txt2img": d.StableDiffusionXLPipeline, "img2img": d.StableDiffusionXLImg2ImgPipeline,
                    "inpaint": d.StableDiffusionXLInpaintPipeline}[op]
-            p = self.pipe if op == "txt2img" else cls.from_pipe(self.pipe)
+            p = self.pipe if op == "txt2img" else derive_pipe(cls, self.pipe)
         p.set_progress_bar_config(disable=True)
         self.variants[key] = p
         return p
