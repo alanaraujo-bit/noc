@@ -51,6 +51,7 @@ public static class PromptCompiler
             {
                 var tags = SplitTags(text);
                 tags.RemoveAll(t => QualityTags.Contains(t));
+                if (body is not null) tags = DropUnrequestedStyle(tags, original);
                 if (!raw && body is not null && tags.Count > 40) tags = tags.Take(40).ToList(); // o reescritor às vezes se repete
                 positive = p.Prefix + string.Join(", ", triggers.Concat(tags));
                 break;
@@ -63,8 +64,8 @@ public static class PromptCompiler
                 var head = p.Prefix + (lower.Contains("source_") ? "" : source + ", ") + (lower.Contains("rating_") ? "" : "rating_safe, ");
                 if (body is not null)
                 {
-                    // frase + no máximo 24 tags, sem repetição
-                    var parts = SplitTags(text);
+                    // frase + no máximo 24 tags, sem repetição e sem estilo que ninguém pediu
+                    var parts = DropUnrequestedStyle(SplitTags(text), original);
                     text = string.Join(", ", parts.Take(25));
                 }
                 positive = head + string.Join(", ", triggers.Append(text).Where(s => s.Length > 0));
@@ -79,11 +80,31 @@ public static class PromptCompiler
         return new CompiledPrompt(original, positive, neg, p.Strategy, rewriteMode, body, added);
     }
 
+    /// <summary>
+    /// O reescritor às vezes inventa estilo ("realistic art style", "3d") — isso muda o modelo inteiro de direção.
+    /// Só fica se a pessoa pediu algo de estilo.
+    /// </summary>
+    private static List<string> DropUnrequestedStyle(List<string> tags, string original)
+    {
+        var o = original.ToLowerInvariant();
+        if (Regex.IsMatch(o, @"\b(estilo|style|realis|3d|render|aquarela|watercolor|pixel|sketch|esbo[çc]o|pintura|painting)")) return tags;
+        return tags.Where(t => !Regex.IsMatch(t, @"\b(style|realistic|photorealistic|3d|render|cgi|art)\b", RegexOptions.IgnoreCase)).ToList();
+    }
+
     private static readonly HashSet<string> QualityTags = new(StringComparer.OrdinalIgnoreCase)
         { "masterpiece", "best quality", "high quality", "newest", "absurdres", "highres", "safe" };
 
+    /// <summary>Palavras da própria instrução que o reescritor às vezes devolve como se fossem tags.</summary>
+    private static readonly HashSet<string> Junk = new(StringComparer.OrdinalIgnoreCase)
+        { "clothing", "action", "setting", "subject", "tags", "tag", "girl", "boy", "hair", "details", "key details", "background" };
+
     private static List<string> SplitTags(string s) =>
-        s.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Select(t => t.Replace('_', ' ')).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        s.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(t => t.Replace('_', ' '))
+            // "1witch", "1robot" não existem: só 1girl/1boy/1other levam número colado
+            .Select(t => Regex.IsMatch(t, @"^1(?!girl|boy|other)[a-z]+$", RegexOptions.IgnoreCase) ? t[1..] : t)
+            .Where(t => !Junk.Contains(t))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>Fonte do Pony: anime (padrão), cartoon, furry ou pony, pelo que foi pedido.</summary>
     public static string PonySource(string text)

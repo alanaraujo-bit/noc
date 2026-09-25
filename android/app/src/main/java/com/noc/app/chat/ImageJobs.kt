@@ -76,7 +76,13 @@ class ImageJobs(
         // o PC avisa quando algo do motor de imagem muda (download, instalação, estado)
         scope.launch {
             connection.events.collect { e ->
-                if (e.name == "image") _caps.update { old -> old?.copy(models = ImageCaps.parseModels(e.data), state = e.data.str("state") ?: old.state, hfUser = e.data.str("hfUser")) ?: ImageCaps.parse(e.data) }
+                if (e.name == "image") _caps.update { old ->
+                    old?.copy(
+                        models = ImageCaps.parseModels(e.data), state = e.data.str("state") ?: old.state, hfUser = e.data.str("hfUser"),
+                        imports = ImageCaps.parseImports(e.data.arr("imports")), loraCount = e.data.int("loraCount") ?: old.loraCount,
+                        installQueue = e.data.arr("installQueue")?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content } ?: old.installQueue,
+                    ) ?: ImageCaps.parse(e.data)
+                }
             }
         }
         scope.launch {

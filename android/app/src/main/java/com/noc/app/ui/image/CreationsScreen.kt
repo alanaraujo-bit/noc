@@ -74,14 +74,26 @@ fun CreationsScreen(container: AppContainer, nav: NavHostController) {
     val all by container.db.creations().observeAll().collectAsState(initial = null)
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf("all") }
+    var modelFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var loraFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var convFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    val conversations by container.db.conversations().observeRecent(2000).collectAsState(initial = emptyList())
+    val actions = remember { CreationActions(container, nav, scope, toast = { t -> android.widget.Toast.makeText(container.app, t, android.widget.Toast.LENGTH_SHORT).show() }) }
     var viewer by remember { mutableStateOf<Int?>(null) }
     var confirmDelete by remember { mutableStateOf<CreationEntity?>(null) }
 
     val models = all.orEmpty().map { it.modelName }.filter { it.isNotBlank() }.distinct()
+    val loraNames = all.orEmpty().flatMap { it.loras?.split(" | ").orEmpty() }.filter { it.isNotBlank() }.distinct()
+    val convIds = all.orEmpty().mapNotNull { it.conversationId }.distinct()
+    val convTitles = conversations.associate { it.id to it.title }
     val q = Search.normalize(query.trim())
     val shown = all.orEmpty().filter { cr ->
-        (filter == "all" || (filter == "fav" && cr.favorite) || cr.modelName == filter) &&
-            (q.isEmpty() || Search.normalize(cr.prompt).contains(q) || Search.normalize(cr.finalPrompt ?: "").contains(q))
+        (filter == "all" || (filter == "fav" && cr.favorite) || (filter == "edits" && cr.op != null && cr.op != "txt2img")) &&
+            (modelFilter == null || cr.modelName == modelFilter) &&
+            (loraFilter == null || cr.loras?.split(" | ")?.contains(loraFilter) == true) &&
+            (convFilter == null || cr.conversationId == convFilter) &&
+            (q.isEmpty() || Search.normalize(cr.prompt).contains(q) || Search.normalize(cr.finalPrompt ?: "").contains(q) ||
+                Search.normalize(cr.loras ?: "").contains(q) || Search.normalize(cr.modelName).contains(q))
     }
 
     Column(Modifier.fillMaxSize().background(c.bg).statusBarsPadding()) {
@@ -100,9 +112,14 @@ fun CreationsScreen(container: AppContainer, nav: NavHostController) {
                 }
             }
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip("Todas", filter == "all") { filter = "all" }
-                FilterChip("Favoritas", filter == "fav") { filter = "fav" }
-                models.forEach { m -> FilterChip(m, filter == m) { filter = m } }
+                FilterChip("Todas", filter == "all" && modelFilter == null && loraFilter == null && convFilter == null) {
+                    filter = "all"; modelFilter = null; loraFilter = null; convFilter = null
+                }
+                FilterChip("Favoritas", filter == "fav") { filter = if (filter == "fav") "all" else "fav" }
+                if (all.orEmpty().any { it.op != null && it.op != "txt2img" }) FilterChip("Edições", filter == "edits") { filter = if (filter == "edits") "all" else "edits" }
+                if (models.size > 1) MenuChip("Modelo", modelFilter, models.map { it to it }) { modelFilter = it }
+                if (loraNames.isNotEmpty()) MenuChip("LoRA", loraFilter, loraNames.map { it to it }) { loraFilter = it }
+                if (convIds.size > 1) MenuChip("Conversa", convFilter?.let { convTitles[it] ?: "Conversa" }?.let { convFilter }, convIds.map { it to (convTitles[it] ?: "Conversa") }) { convFilter = it }
             }
         }
         when {
@@ -129,6 +146,8 @@ fun CreationsScreen(container: AppContainer, nav: NavHostController) {
         ImageViewer(
             items = shown, start = start,
             actions = ViewerActions(
+                creation = actions,
+                loadMeta = { id -> container.chat.images.meta(id) },
                 onReusePrompt = { cr -> nav.navigate(Routes.chat(cr.conversationId ?: Routes.NEW, draft = cr.prompt, image = true)) },
                 onVariation = { cr -> scope.launch { runCatching { container.db.messages().get(cr.messageId ?: "")?.let { container.chat.images.variation(it) } } } ; cr.conversationId?.let { nav.navigate(Routes.chat(it)) } },
                 onOpenConversation = { cr -> cr.conversationId?.let { nav.navigate(Routes.chat(it, msg = cr.messageId)) } },
@@ -156,6 +175,27 @@ fun CreationsScreen(container: AppContainer, nav: NavHostController) {
                     viewer = null
                 }
                 Spacer(Modifier.padding(10.dp))
+            }
+        }
+    }
+}
+
+/** Filtro com lista (modelo, LoRA, conversa): mostra o escolhido e permite limpar. */
+@Composable
+private fun MenuChip(label: String, selected: String?, items: List<Pair<String, String>>, onPick: (String?) -> Unit) {
+    val c = Noc.colors
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Text(
+            (items.firstOrNull { it.first == selected }?.second ?: label) + " ▾", style = MaterialTheme.typography.labelMedium,
+            color = if (selected != null) c.onAccent else c.text, maxLines = 1,
+            modifier = Modifier.clip(RoundedCornerShape(50)).background(if (selected != null) c.accent else c.surface2).pressable { open = true }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+        )
+        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (selected != null) androidx.compose.material3.DropdownMenuItem(text = { Text("Todos", color = c.accent) }, onClick = { onPick(null); open = false })
+            items.forEach { (id, name) ->
+                androidx.compose.material3.DropdownMenuItem(text = { Text(name, color = c.text, maxLines = 1) }, onClick = { onPick(id); open = false })
             }
         }
     }

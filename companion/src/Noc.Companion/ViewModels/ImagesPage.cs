@@ -57,17 +57,20 @@ public sealed partial class MainViewModel
     {
         ImageAction = new Command(p =>
         {
+            if (p is "aux") { foreach (var a in ImageCatalog.AuxPackages.Where(a => !_host.Images.Store.IsInstalled(a))) _host.Images.QueueInstall(a); return; }
             if (p is not string id || ImageCatalog.Find(id) is not { } m) return;
             var st = _host.Images.Store.StateOf(m);
             if (st is ImageModelState.Downloading or ImageModelState.Checking or ImageModelState.Verifying) _host.Images.Store.Pause(m);
             else if (st == ImageModelState.Installed && _host.Images.Store.LatestRevision(m) is { } latest) _host.Images.Store.StartInstall(m, latest);
             else if (st == ImageModelState.Installed) _ = Task.Run(() => _host.Images.Store.VerifyInstalledAsync(m, CancellationToken.None));
-            else _host.Images.Store.StartInstall(m);
+            else _host.Images.QueueInstall(m);
         });
         ImageSecondary = new Command(p =>
         {
             if (p is not string id || ImageCatalog.Find(id) is not { } m) return;
-            var ok = System.Windows.MessageBox.Show($"Remover o {m.Name} deste PC? Os arquivos do modelo ({ImageModelStore.Gb(m.ApproxBytes)}) serão apagados; as imagens já criadas continuam.",
+            var ok = System.Windows.MessageBox.Show(m.Local
+                    ? $"Remover o {m.Name} da lista de especialistas? O arquivo que você importou não é apagado."
+                    : $"Remover o {m.Name} deste PC? Os arquivos do modelo ({ImageModelStore.Gb(m.ApproxBytes)}) serão apagados; as imagens já criadas continuam.",
                 "Noc", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question);
             if (ok == System.Windows.MessageBoxResult.Yes) _host.Images.Store.Delete(m);
         });
@@ -100,7 +103,7 @@ public sealed partial class MainViewModel
                 EngineState.Working => $"Gerando com {eng.Loaded?.Name}",
                 EngineState.Loading or EngineState.Starting => "Preparando o gerador…",
                 EngineState.Ready => $"Pronto · {eng.Loaded?.Name} aquecido",
-                _ => ImageCatalog.All.Any(eng.Store.IsInstalled) ? "Pronto" : "Instalando o primeiro modelo",
+                _ => ImageCatalog.Models.Any(eng.Ready) ? "Pronto" : "Instalando o primeiro modelo",
             };
         ImageDetail = $"{gpu} · motor padrão: Z-Image Turbo" + (eng.Displaced is { } d ? $" · {_host.Models.DisplayName(d.Key)} volta quando o motor ficar ocioso" : "");
         ImageRoot = ImagePaths.HasRoot ? ImagePaths.Root : "";
@@ -109,11 +112,13 @@ public sealed partial class MainViewModel
         if (_imageUsageTick++ % 10 == 0)
         {
             var (count, bytes) = eng.Outputs.Usage();
-            ImageUsage = count == 0 ? "Nenhuma imagem criada ainda" : $"{count} imagens · {ImageModelStore.Gb(bytes)}";
+            var loras = eng.Library.Loras.Count;
+            ImageUsage = (count == 0 ? "Nenhuma imagem criada ainda" : $"{count} imagens · {ImageModelStore.Gb(bytes)}") +
+                         (loras > 0 ? $" · {loras} LoRA{(loras > 1 ? "s" : "")} na biblioteca" : "");
         }
 
         var rows = new List<ImageModelRow>();
-        foreach (var m in ImageCatalog.All)
+        foreach (var m in ImageCatalog.Models)
         {
             var st = eng.Store.StateOf(m);
             var p = eng.Store.LiveProgress(m);
@@ -137,9 +142,10 @@ public sealed partial class MainViewModel
                 case ImageModelState.Installed:
                     status = optimizing ? "Instalado · otimizando para a sua GPU" : eng.Loaded == m ? "Instalado · carregado" : "Instalado · pronto";
                     color = Brush("Ok");
-                    detail = $"{ImageModelStore.Gb(m.ApproxBytes)} · revisão {eng.Store.InstalledRevision(m)?[..8]} · {m.License}" +
+                    detail = (m.Local ? $"{ImageModelStore.Gb(m.ApproxBytes)} · importado · {m.Family}" : $"{ImageModelStore.Gb(m.ApproxBytes)} · revisão {eng.Store.InstalledRevision(m)?[..Math.Min(8, eng.Store.InstalledRevision(m)!.Length)]} · {m.License}") +
                              (eng.Store.LoadSeconds(m) is { } ls ? $" · carrega em ~{ls.ToString("0", Br)} s" : "");
-                    action = update ? "Atualizar" : "Verificar";
+                    action = update ? "Atualizar" : m.Local ? null : "Verificar";
+                    if (!eng.Ready(m)) { status = "Instalado · falta a configuração do SDXL"; color = Brush("Warn"); action = "Instalar"; }
                     if (update) status = "Atualização disponível";
                     break;
                 case ImageModelState.AuthRequired or ImageModelState.TermsRequired:
@@ -161,7 +167,7 @@ public sealed partial class MainViewModel
                     action = "Continuar";
                     break;
                 default:
-                    status = m.Gated && !HfConnected ? "Autorização necessária" : "Não instalado";
+                    status = m.Gated && !HfConnected ? "Autorização necessária" : eng.InstallQueue.Contains(m.Id) ? "Na fila de instalação" : "Não instalado";
                     color = Brush(m.Gated && !HfConnected ? "Warn" : "Text3");
                     detail = $"Download de {ImageModelStore.Gb(m.ApproxBytes)} · {m.License}";
                     action = m.Gated && !HfConnected ? null : "Instalar";
@@ -169,7 +175,8 @@ public sealed partial class MainViewModel
             }
             rows.Add(new ImageModelRow
             {
-                Id = m.Id, Name = m.Name, Role = m.Profile == "fast" ? "⚡ Rápido" : "◆ Qualidade", Status = status, StatusColor = color, Detail = detail,
+                Id = m.Id, Name = m.Name, Role = m.Profile switch { "fast" => "⚡ Rápido", "quality" => "◆ Qualidade", _ => "◈ " + m.Tagline },
+                Status = status, StatusColor = color, Detail = detail,
                 Progress = p is not null && p.Total > 0 ? (double)p.Done / p.Total : optimizing ? eng.OptimizeProgress ?? 0 : 0,
                 ShowProgress = st is ImageModelState.Downloading or ImageModelState.Verifying || optimizing,
                 Action = action, SecondaryAction = installed ? "Remover" : null,
@@ -177,6 +184,20 @@ public sealed partial class MainViewModel
                 LicenseUrl = m.LicenseUrl,
             });
         }
+        // componentes de edição (ControlNet, IP-Adapter, detectores, ampliação): uma linha só
+        var aux = ImageCatalog.AuxPackages;
+        var auxDone = aux.Count(eng.Store.IsInstalled);
+        var auxBusy = aux.FirstOrDefault(eng.Store.Busy);
+        var auxP = auxBusy is null ? null : eng.Store.LiveProgress(auxBusy);
+        rows.Add(new ImageModelRow
+        {
+            Id = "aux", Name = "Componentes de edição", Role = "ControlNet · referência · rostos e mãos · ampliação",
+            Status = auxDone == aux.Length ? "Instalados · prontos" : auxBusy is not null ? $"Instalando {auxBusy.Name}" : $"{auxDone} de {aux.Length} instalados",
+            StatusColor = Brush(auxDone == aux.Length ? "Ok" : auxBusy is not null ? "Accent" : "Text3"),
+            Detail = $"{ImageModelStore.Gb(aux.Sum(a => a.ApproxBytes))} · Apache 2.0 / BSD · só .safetensors",
+            Progress = auxP is not null && auxP.Total > 0 ? (double)auxP.Done / auxP.Total : 0, ShowProgress = auxBusy is not null,
+            Action = auxDone == aux.Length || auxBusy is not null ? null : "Instalar",
+        });
         if (!rows.Select(Sig).SequenceEqual(ImageModels.Select(Sig)))
         {
             ImageModels.Clear();

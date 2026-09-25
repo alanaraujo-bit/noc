@@ -620,6 +620,9 @@ fun ChatScreen(
             com.noc.app.ui.image.ImageViewer(
                 items = list.filter { it.path != null || it.thumbPath != null }, start = index,
                 actions = com.noc.app.ui.image.ViewerActions(
+                    creation = com.noc.app.ui.image.CreationActions(container, nav, scope, toast = { t -> vm.toast(t) },
+                        currentConversation = { conv?.id }, onStayed = { viewer = null }),
+                    loadMeta = { id -> container.chat.images.meta(id) },
                     onRegenerate = msg?.let { m -> { _ -> vm.regenerate(m.id); Unit } },
                     onVariation = msg?.let { m -> { _ -> scope.launch { runCatching { container.chat.images.variation(m) } }; Unit } },
                     onReusePrompt = msg?.let { m -> { _ -> com.noc.app.chat.ImageJob.decode(m.imageJson)?.let { reusePrompt(it) }; Unit } },

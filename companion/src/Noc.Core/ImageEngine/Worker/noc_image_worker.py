@@ -204,22 +204,33 @@ REWRITE_ENHANCE = (
 
 
 REWRITE_TAGS = (
-    "You convert a user's image request into Danbooru-style tags for an anime illustration model. Write English tags only.\n"
-    "Output one line of comma-separated tags, lowercase, with spaces instead of underscores. Order: subject count tags "
-    "(1girl, 1boy, 2girls, multiple boys...) only when the request clearly describes people or characters, or 'no humans' "
-    "when it has none; then character and series names if the user named them; then appearance, clothing, pose, expression, "
-    "action, setting, lighting, composition and art style tags. Translate every requested detail faithfully. Do not invent "
-    "characters, people, clothing, age or body details that were not requested. Keep any text that should appear inside the "
-    "image in quotes. No quality tags (like masterpiece), no rating tags, no explanations. Separate tags with commas. At most 30 tags, "
-    "never repeat a tag."
+    "You convert a user's image request (often in Portuguese) into Danbooru tags for an anime illustration model.\n"
+    "Rules:\n"
+    "- Output ONE line of comma-separated English Danbooru tags, lowercase, spaces instead of underscores.\n"
+    "- Use real Danbooru tags (1girl, 1boy, 2girls, solo, silver hair, long hair, reading, book, library, bookshelf, indoors, "
+    "armor, knight, dragon, fighting, smile, school uniform, cherry blossoms, night, city...).\n"
+    "- Start with the subject count that matches the request exactly: one girl/woman -> 1girl, solo; one boy/man -> 1boy, solo; "
+    "two boys -> 2boys; a girl and a boy -> 1girl, 1boy; robots, animals, objects, food or landscapes without people -> no humans.\n"
+    "- Translate only what was requested. Do NOT add art styles (realistic, 3d, anime style, fantasy art), lighting, mood, "
+    "camera, color palette or quality tags unless the user asked for them. Never add clothing, body, age or ethnicity details "
+    "that were not requested.\n"
+    "- Keep text that must appear in the image in quotes.\n"
+    "- Between 5 and 25 tags, never repeat a tag, no explanations.\n"
+    "Example: garota de cabelo prateado lendo um livro numa biblioteca antiga -> 1girl, solo, silver hair, reading, book, library, bookshelf, indoors\n"
+    "Example: um cavaleiro de armadura dourada lutando contra um dragão -> 1boy, knight, golden armor, fighting, dragon, battle\n"
+    "Example: um gato dormindo numa janela chuvosa -> no humans, cat, sleeping, window, rain\n"
+    "Example: dois garotos jogando futebol na praia -> 2boys, playing soccer, soccer ball, beach, outdoors"
 )
 REWRITE_PONY = (
-    "You turn a user's image request into a prompt for an anime/cartoon image model that understands English sentences and "
-    "Danbooru-style tags. Output one line: first a short English sentence describing the scene, then a comma, then "
-    "comma-separated lowercase tags for the key details (subject count like 1girl only when people are requested, appearance, "
-    "clothing, pose, expression, setting, lighting, style). Translate every requested detail faithfully and do not invent "
-    "people, characters, clothing, age or body details that were not requested. Keep any text that should appear inside the "
-    "image in quotes. No score tags, no rating tags, no quality tags, no explanations. At most 20 tags, never repeat a tag."
+    "You turn a user's image request (often in Portuguese) into a prompt for an anime/cartoon image model that understands "
+    "English sentences and Danbooru tags. Output one line: a short English sentence describing exactly what was requested, "
+    "then a comma, then up to 15 comma-separated lowercase Danbooru tags for the key details. The first tag is the subject count "
+    "matching the request exactly (one girl -> 1girl, solo; two boys -> 2boys; a girl and a boy -> 1girl, 1boy; robots, animals, "
+    "objects or landscapes without people -> no humans), then subject, clothing, action and setting. Translate only what was requested: do NOT add art styles, lighting, mood, camera or "
+    "quality tags unless asked, and never add clothing, body, age or ethnicity details that were not requested. Keep text "
+    "that must appear in the image in quotes. No score, rating or source tags, no explanations.\n"
+    "Example: garota de cabelo prateado lendo um livro numa biblioteca -> A girl with silver hair reading a book in a library, "
+    "1girl, solo, silver hair, reading, book, library, bookshelf, indoors"
 )
 REWRITE_MODES = {"translate": REWRITE_TRANSLATE, "enhance": REWRITE_ENHANCE, "tags": REWRITE_TAGS, "pony": REWRITE_PONY}
 

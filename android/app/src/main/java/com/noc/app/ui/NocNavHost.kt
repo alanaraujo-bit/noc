@@ -192,7 +192,7 @@ fun NocNavHost(container: AppContainer, prefs: AppPrefs, incoming: MutableStateF
             arguments = listOf(navArgument("id") { type = NavType.StringType }, navArgument("mode") { type = NavType.StringType; defaultValue = "paint" }),
         ) { e -> com.noc.app.ui.image.ImageEditorScreen(container, nav, e.arguments?.getString("id") ?: "", e.arguments?.getString("mode") ?: "paint") }
         composable(Routes.HISTORY) { HistoryScreen(container, nav) }
-        composable(Routes.MODELS) { ModelsScreen(container, onBack = { nav.popBackStack() }) }
+        composable(Routes.MODELS) { ModelsScreen(container, onBack = { nav.popBackStack() }, onLoras = { nav.navigate(Routes.LORAS) }) }
         composable(Routes.ACTIVITY) { com.noc.app.ui.activity.ActivityScreen(container, nav) }
         composable(Routes.STATUS) { com.noc.app.ui.status.StatusScreen(container, nav) }
         composable(Routes.VOICE) { com.noc.app.ui.settings.VoiceSettingsScreen(container, prefs, onBack = { nav.popBackStack() }) }

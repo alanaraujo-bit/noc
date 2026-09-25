@@ -37,7 +37,16 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
+import androidx.compose.material.icons.rounded.AccessibilityNew
+import androidx.compose.material.icons.rounded.AutoFixHigh
+import androidx.compose.material.icons.rounded.Brush
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Face
+import androidx.compose.material.icons.rounded.Gesture
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Terrain
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
@@ -88,6 +97,10 @@ import java.io.File
 
 /** O que o visualizador pode fazer além de ver (cada tela liga o que faz sentido). */
 class ViewerActions(
+    /** Editar, variar, expandir, melhorar, guiar, recriar (fase 4). */
+    val creation: CreationActions? = null,
+    /** Metadados completos do PC (prompt final, negativo, LoRAs, sampler...). */
+    val loadMeta: (suspend (String) -> kotlinx.serialization.json.JsonObject?)? = null,
     val onRegenerate: ((CreationEntity) -> Unit)? = null,
     val onVariation: ((CreationEntity) -> Unit)? = null,
     val onReusePrompt: ((CreationEntity) -> Unit)? = null,
@@ -106,6 +119,8 @@ fun ImageViewer(items: List<CreationEntity>, start: Int, actions: ViewerActions,
     var chrome by remember { mutableStateOf(true) }
     var zoomed by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf<CreationEntity?>(null) }
+    /** Folha de ações: vary | improve | guide */
+    var actionSheet by remember { mutableStateOf<String?>(null) }
     val current = items.getOrNull(pager.currentPage) ?: items.first()
     val file = current.path?.let { File(it) }
 
@@ -155,6 +170,17 @@ fun ImageViewer(items: List<CreationEntity>, start: Int, actions: ViewerActions,
                         .horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    actions.creation?.let { a ->
+                        if (file != null) {
+                            Labeled(Icons.Rounded.Brush, "Editar") { a.paint(current); onDismiss() }
+                            Labeled(Icons.Rounded.Shuffle, "Variar") { actionSheet = "vary" }
+                            Labeled(Icons.Rounded.OpenInFull, "Expandir") { a.expand(current); onDismiss() }
+                            Labeled(Icons.Rounded.AutoFixHigh, "Melhorar") { actionSheet = "improve" }
+                            Labeled(Icons.Rounded.Image, "Referência") { actionSheet = "guide" }
+                        }
+                        Labeled(Icons.Rounded.EditNote, "Reutilizar") { a.reusePrompt(current); onDismiss() }
+                        if (current.op != "inpaint") Labeled(Icons.Rounded.Replay, "Recriar") { a.recreate(current); onDismiss() }
+                    }
                     if (file != null) {
                         Labeled(Icons.Rounded.Download, "Salvar") {
                             if (ImageFiles.needsPermission(context)) storagePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
@@ -167,14 +193,25 @@ fun ImageViewer(items: List<CreationEntity>, start: Int, actions: ViewerActions,
                         }
                     }
                     actions.onRegenerate?.let { f -> Labeled(Icons.Rounded.Refresh, "Refazer") { f(current); onDismiss() } }
-                    actions.onVariation?.let { f -> Labeled(Icons.Rounded.Shuffle, "Variação") { f(current); onDismiss() } }
-                    actions.onReusePrompt?.let { f -> Labeled(Icons.Rounded.EditNote, "Reutilizar") { f(current); onDismiss() } }
+                    if (actions.creation == null) {
+                        actions.onVariation?.let { f -> Labeled(Icons.Rounded.Shuffle, "Variação") { f(current); onDismiss() } }
+                        actions.onReusePrompt?.let { f -> Labeled(Icons.Rounded.EditNote, "Reutilizar") { f(current); onDismiss() } }
+                    }
                     actions.onOpenConversation?.takeIf { current.conversationId != null }?.let { f -> Labeled(Icons.AutoMirrored.Rounded.Chat, "Conversa") { f(current); onDismiss() } }
                     actions.onDelete?.let { f -> Labeled(Icons.Rounded.Delete, "Excluir") { f(current); if (items.size <= 1) onDismiss() } }
                 }
             }
         }
-        details?.let { d -> DetailsSheet(d) { details = null } }
+        details?.let { d -> DetailsSheet(d, actions.loadMeta) { details = null } }
+        val act = actions.creation
+        if (act != null) when (actionSheet) {
+            "vary" -> VarySheet(onPick = { strength, count -> act.variation(current, strength, count); actionSheet = null; onDismiss() }, onDismiss = { actionSheet = null })
+            "improve" -> ImproveSheet(
+                onHd = { act.hd(current); actionSheet = null; onDismiss() }, onUp = { f -> act.upscale(current, f); actionSheet = null; onDismiss() },
+                onDetail = { act.detail(current); actionSheet = null; onDismiss() }, onDismiss = { actionSheet = null },
+            )
+            "guide" -> GuideUseSheet(onPick = { g -> act.useAsGuide(current, g); actionSheet = null; onDismiss() }, onDismiss = { actionSheet = null })
+        }
     }
 }
 
@@ -247,26 +284,91 @@ private fun ZoomableImage(item: CreationEntity, onTap: () -> Unit, onZoomChange:
 }
 
 @Composable
-private fun DetailsSheet(c: CreationEntity, onDismiss: () -> Unit) {
+private fun DetailsSheet(c: CreationEntity, loadMeta: (suspend (String) -> kotlinx.serialization.json.JsonObject?)?, onDismiss: () -> Unit) {
     val col = Noc.colors
+    val meta by produceState<kotlinx.serialization.json.JsonObject?>(null, c.id) { value = loadMeta?.invoke(c.id) }
+    fun m(k: String): String? = (meta?.get(k) as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() && it != "null" }
     NocSheet(onDismiss) {
         Column(Modifier.padding(horizontal = 22.dp).verticalScroll(rememberScrollState())) {
             Text("Detalhes", style = MaterialTheme.typography.headlineLarge, color = col.text, modifier = Modifier.padding(vertical = 8.dp))
             SelectionContainer {
                 Column {
-                    Field("Pedido", c.prompt)
-                    if (!c.finalPrompt.isNullOrBlank() && c.finalPrompt != c.prompt) Field("Prompt usado pelo modelo", c.finalPrompt)
-                    Field("Modelo", c.modelName.ifBlank { c.model })
+                    Field("Pedido", c.prompt.ifBlank { m("prompt") ?: "—" })
+                    val final = m("finalPrompt") ?: c.finalPrompt
+                    if (!final.isNullOrBlank() && final != c.prompt) Field("Prompt usado pelo modelo" + (strategyLabel(m("strategy") ?: c.strategy)?.let { " · $it" } ?: ""), final)
+                    (m("negative") ?: c.negative)?.takeIf { it.isNotBlank() }?.let { Field("Prompt negativo", it) }
+                    val hash = m("modelSha256")?.let { "hash ${it.take(12)}" } ?: m("modelRevision")?.let { "revisão ${it.take(12)}" }
+                    Field("Modelo", listOfNotNull(c.modelName.ifBlank { c.model }, m("modelVersion"), hash).joinToString(" · "))
+                    val loras = (meta?.get("loras") as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it as? kotlinx.serialization.json.JsonObject }
+                        ?.joinToString("\n") { l -> "${(l["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content} · ${(l["weight"] as? kotlinx.serialization.json.JsonPrimitive)?.content}" }
+                        ?.takeIf { it.isNotBlank() } ?: c.loras
+                    if (!loras.isNullOrBlank()) Field("LoRAs", loras)
+                    opLabel(m("op") ?: c.op)?.let { Field("Operação", it) }
                     Field("Tamanho", "${c.width} × ${c.height}")
                     c.seed?.let { Field("Seed", it.toString()) }
+                    (m("sampler") ?: c.sampler)?.let { smp -> Field("Sampler", smp + (m("schedule")?.let { " · $it" } ?: "")) }
                     c.steps?.let { Field("Passos", it.toString()) }
-                    c.guidance?.takeIf { it > 0 }?.let { Field("Guidance", "%.1f".format(it)) }
+                    c.guidance?.takeIf { it > 0 }?.let { Field(if (m("engine") == "sdxl") "CFG" else "Guidance", "%.1f".format(it)) }
+                    m("clipSkip")?.let { Field("Clip skip", it) }
                     c.genMs?.let { Field("Tempo no PC", Texts.seconds(it)) }
                     Field("Criada", Texts.relative(c.createdAt))
                     if (c.bytes > 0) Field("Arquivo", "PNG · " + Texts.bytes(c.bytes))
                 }
             }
             Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+private fun strategyLabel(s: String?) = when (s) {
+    "tags" -> "tags do modelo"; "pony" -> "score tags do Pony"; "raw" -> "RAW (sem mudanças)"; "recreate" -> "recriada"; "natural" -> "descrição em inglês"; else -> null
+}
+
+private fun opLabel(op: String?) = when (op) {
+    "img2img" -> "Variação"; "inpaint" -> "Edição com pincel"; "outpaint" -> "Expansão"; "upscale" -> "Ampliação"; "detail" -> "Rostos e mãos refeitos"
+    "hd" -> "Alta definição"; else -> null
+}
+
+@Composable
+private fun VarySheet(onPick: (Double, Int) -> Unit, onDismiss: () -> Unit) {
+    val col = Noc.colors
+    NocSheet(onDismiss) {
+        Column(Modifier.padding(horizontal = 18.dp)) {
+            Text("Variar", style = MaterialTheme.typography.headlineLarge, color = col.text, modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
+            OptionRow(Icons.Rounded.Shuffle, "Variação sutil", "Mesma cena, pequenos detalhes diferentes · 2 versões") { onPick(0.35, 2) }
+            OptionRow(Icons.Rounded.Shuffle, "Variação forte", "Mesma ideia, composição mais livre · 2 versões") { onPick(0.6, 2) }
+            OptionRow(Icons.Rounded.Shuffle, "Quatro variações", "Sutis, para escolher a melhor") { onPick(0.4, 4) }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun ImproveSheet(onHd: () -> Unit, onUp: (Int) -> Unit, onDetail: () -> Unit, onDismiss: () -> Unit) {
+    val col = Noc.colors
+    NocSheet(onDismiss) {
+        Column(Modifier.padding(horizontal = 18.dp)) {
+            Text("Melhorar", style = MaterialTheme.typography.headlineLarge, color = col.text, modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
+            OptionRow(Icons.Rounded.AutoFixHigh, "Alta definição", "Amplia 2x e refaz os detalhes finos com o modelo", onClick = onHd)
+            OptionRow(Icons.Rounded.Face, "Rostos e mãos", "Encontra rostos e mãos e refaz cada um com mais detalhe", onClick = onDetail)
+            OptionRow(Icons.Rounded.OpenInFull, "Ampliar 2x", "Mais pixels, rápido, sem mudar nada", onClick = { onUp(2) })
+            OptionRow(Icons.Rounded.OpenInFull, "Ampliar 4x", "Para imprimir ou recortar", onClick = { onUp(4) })
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun GuideUseSheet(onPick: (Guide) -> Unit, onDismiss: () -> Unit) {
+    val col = Noc.colors
+    NocSheet(onDismiss) {
+        Column(Modifier.padding(horizontal = 18.dp)) {
+            Text("Usar como guia", style = MaterialTheme.typography.headlineLarge, color = col.text, modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
+            OptionRow(Icons.Rounded.Image, Guide.REFERENCE.label, Guide.REFERENCE.sub) { onPick(Guide.REFERENCE) }
+            OptionRow(Icons.Rounded.AccessibilityNew, Guide.POSE.label, Guide.POSE.sub) { onPick(Guide.POSE) }
+            OptionRow(Icons.Rounded.Terrain, Guide.DEPTH.label, Guide.DEPTH.sub) { onPick(Guide.DEPTH) }
+            OptionRow(Icons.Rounded.Gesture, Guide.EDGES.label, Guide.EDGES.sub) { onPick(Guide.EDGES) }
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
