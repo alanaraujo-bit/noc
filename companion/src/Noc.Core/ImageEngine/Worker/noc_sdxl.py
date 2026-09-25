@@ -56,8 +56,9 @@ def make_scheduler(base_config, sampler, schedule, prediction, zsnr):
     cfg.update(args)
     cfg["prediction_type"] = prediction
     if zsnr and "rescale_betas_zero_snr" in accepted:
+        # espaçamento "leading" (o do exemplo oficial do NoobAI): medido mais claro que o "trailing" (brilho médio 47 vs 30,
+        # mesmas seeds); o "trailing" continua disponível como "SGM Uniforme" no Estúdio
         cfg["rescale_betas_zero_snr"] = True
-        cfg["timestep_spacing"] = "trailing"  # zero terminal SNR pede o último passo no fim da escala
     for k in ("use_karras_sigmas", "use_exponential_sigmas", "use_beta_sigmas"):
         cfg.pop(k, None)
     if schedule == "karras" and "use_karras_sigmas" in accepted:

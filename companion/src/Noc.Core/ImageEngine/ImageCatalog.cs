@@ -189,7 +189,7 @@ public static class ImageCatalog
     private static ImageDefaults Sdxl(int[] steps, double cfg, double min, double max) => new()
     {
         Steps = steps, Guidance = cfg, GuidanceAdjustable = true, GuidanceMin = min, GuidanceMax = max, StepsMin = 8, StepsMax = 60,
-        Transformer = "bf16", TextEncoder = "gpu", TransformerGiB = 4.8, ResidentGiB = 6.6, PeakExtraGiB = 2.4,
+        Transformer = "bf16", TextEncoder = "gpu", TransformerGiB = 4.8, ResidentGiB = 6.6, PeakExtraGiB = 4.4,
         NativePortuguese = false, MaxPixels = 1344L * 1344, HasLowVram = false,
     };
 

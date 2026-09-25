@@ -244,3 +244,16 @@ Testes com o APK de release (R8, com.noc.app 1.1.0) pareado ao Companion 1.1.0 i
 - Operações testadas no worker: variação (img2img), inpaint só da área (recorte ~1MP), outpaint (bordas esticadas +
   inpaint), detail pass (Grounding DINO: rostos/mãos), upscale 2x (1,1 s), Alta Definição (ESRGAN + refino em blocos
   1024 com sobreposição), ControlNet pose/profundidade/bordas, IP-Adapter, LoRA sem vazamento (base antes/depois idênticas).
+## Benchmark real dos especialistas (RTX 3090 Ti, 2026-09-25) — define os padrões
+| modelo | carga (disco quente) | ms/passo 1024² | ms/passo 832×1216 | residente | pico alocado / reservado |
+|---|---|---|---|---|---|
+| RealVisXL V5 bf16 | 3,5–10 s | 233 | 225 | 6,6 GiB | 9,0 / 11,0 GiB |
+| RealVisXL V5 fp16 | 3,5 s | 237 | 231 | 6,6 GiB | 10,5 / 14,0 GiB (VAE sobe p/ fp32) |
+| NoobAI V-Pred bf16 | 7,6 s | 230 | 225 | 6,6 GiB | 9,0 / 11,0 GiB |
+| Pony V6 bf16 | 8,3 s | 230 | 226 | 6,6 GiB | 9,0 / 11,0 GiB |
+- Padrão bf16 (fp16 não ganha velocidade e gasta +3 GB no pico). SDXL cabe junto com o Qwen 9B (7,2 GiB): o LLM não
+  precisa sair da GPU para um especialista (MakeRoom só descarrega se faltar).
+- Tempos por imagem com os presets: RealVisXL 30 passos ≈ 7,4 s; NoobAI 28 ≈ 6,9 s; Pony 25 ≈ 6,2 s (+ carga na 1ª).
+- NoobAI: "trailing" com zero-SNR saía escuro (brilho médio 30); "leading" (exemplo oficial) + rescale 0,5 → 47. Padrão: leading.
+- Prompt Compiler (Qwen3-4B fp8 residente, 1–4 s): tags Danbooru reais; bug corrigido — o reescritor inventava estilo
+  ("realistic art style") e roupas; agora exemplos no sistema + filtro de estilo não pedido + contagem (1girl/2boys/no humans).
