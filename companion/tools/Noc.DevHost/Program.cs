@@ -3,6 +3,8 @@
 using Noc.Core;
 using Noc.Core.Storage;
 
+// Runtime/tmp do motor de imagem separados do Companion instalado (mesma máquina): ver ImagePaths.HostTag.
+Noc.Core.ImageEngine.ImagePaths.HostTag ??= "dev";
 var dataIdx = Array.IndexOf(args, "--data");
 if (dataIdx >= 0) AppPaths.Root = args[dataIdx + 1];
 var autoApprove = args.Contains("--approve");

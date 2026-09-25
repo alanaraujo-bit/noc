@@ -90,7 +90,7 @@ public sealed class ImageRuntime
             Error = null;
             var sw = Stopwatch.StartNew();
             Directory.CreateDirectory(ImagePaths.Runtime);
-            var cacheDir = Path.Combine(ImagePaths.Cache, "uv");
+            var cacheDir = Path.Combine(ImagePaths.Cache, ImagePaths.HostTag is null ? "uv" : "uv-" + ImagePaths.HostTag);
             var env = new Dictionary<string, string>
             {
                 ["UV_PYTHON_INSTALL_DIR"] = Path.Combine(ImagePaths.Runtime, "python"),
