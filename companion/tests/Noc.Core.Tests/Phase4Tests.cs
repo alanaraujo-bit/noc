@@ -473,4 +473,41 @@ public class Phase4Tests(ITestOutputHelper log)
             finally { hog.StandardInput.Close(); hog.Kill(); }
         }
     }
+
+    [Fact]
+    public async Task P10_Real_flux_generates_and_edits_with_the_llm_loaded()
+    {
+        if (!Enabled) return;
+        await using var p = await P4Async();
+        if (!p.Host.Images.Store.IsInstalled(ImageCatalog.FluxDev))
+        {
+            // o FLUX foi baixado com a conta do usuário pelo Companion instalado: os arquivos são os mesmos (conferidos pelo hash)
+            var prod = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(Storage.AppPaths.DefaultRoot, "image-models.json")))!;
+            if (prod["Models"]?["flux1-dev"]?["Complete"]?.GetValue<bool>() != true) { log.WriteLine("FLUX não instalado neste PC: pulado"); return; }
+            var mine = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(SharedRoot, "image-models.json")))!.AsObject();
+            mine["Models"]!["flux1-dev"] = prod["Models"]!["flux1-dev"]!.DeepClone();
+            await p.DisposeAsync();
+            File.WriteAllText(Path.Combine(SharedRoot, "image-models.json"), mine.ToJsonString());
+            await using var p2 = await P4Async();
+            await FluxRun(p2);
+            return;
+        }
+        await FluxRun(p);
+    }
+
+    private async Task FluxRun(Paired p)
+    {
+        var since = DateTime.Now;
+        var fast = p.Host.Catalog.ModelForTier(Library.Tiers.Fast)!;
+        await p.Host.Models.EnsureLoadedAsync(fast, null, CancellationToken.None, Library.Tiers.Fast);
+        var (_, t) = await Gen(p, new JsonObject { ["prompt"] = "um farol numa ilha ao amanhecer", ["engine"] = "quality", ["quality"] = "fast", ["seed"] = 5 });
+        log.WriteLine("FLUX: " + Short(t.End.ToJsonString(), 500));
+        Assert.Equal("stop", t.End["reason"]!.GetValue<string>());
+        Assert.Equal("flux1-dev", t.End["model"]!.GetValue<string>());
+        var mask = await Blob(p, File.ReadAllBytes(Path.Combine(Fixtures, "mask_hat_rgba.png")));
+        var (_, i) = await Gen(p, new JsonObject { ["op"] = "inpaint", ["source"] = "img:" + Img(t)["id"]!.GetValue<string>(), ["mask"] = "blob:" + mask, ["prompt"] = "uma gaivota voando", ["model"] = "flux1-dev", ["steps"] = 16 });
+        Assert.Equal("stop", i.End["reason"]!.GetValue<string>());
+        Assert.Equal("flux1-dev", i.End["model"]!.GetValue<string>());
+        AssertNoVramRecovery(since);
+    }
 }

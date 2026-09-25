@@ -145,8 +145,13 @@ class FluxEngine(Engine):
         t5 = T5EncoderModel.from_pretrained(os.path.join(path, "text_encoder_2"), torch_dtype=BF16, use_safetensors=True)
         clip.requires_grad_(False)
         t5.requires_grad_(False)
-        if te_mode == "fp8":
+        if te_mode in ("fp8", "swap"):
+            # T5-XXL em bf16 são 9,5 GB: subir isso por cima do transformer estoura 24 GB (medido com o FLUX real).
+            # Em fp8 são 4,7 GB; no modo swap ele volta para a RAM depois de codificar o prompt.
             te_to_fp8(t5)
+            if te_mode == "swap":
+                t5.to("cpu")
+                free_cuda()
         progress("transformer")
         transformer = load_transformer(FluxTransformer2DModel, path, cache, transformer_precision, progress)
         progress("pipeline")
@@ -299,6 +304,7 @@ class Rewriter:
                 self.own_model, self.own_key = base, qwen_dir
             else:
                 loaded_here = True
+        lm = ids = out = None
         try:
             lm = self._causal_lm(qwen_dir, base)
             messages = [
@@ -320,10 +326,13 @@ class Rewriter:
                 result = ", ".join(" ".join(p.split()) for p in parts if p.strip(" -*\t"))
             return result
         finally:
+            # todas as referências saem ANTES da limpeza: o lm guarda o modelo; sem isso os 4,4 GB do Qwen ficavam
+            # presos e o FLUX estourava a VRAM na geração seguinte (medido)
+            lm = ids = out = None
             if moved:
                 base.to("cpu")
             if loaded_here:
-                del base
+                base = None
             free_cuda()
 
 

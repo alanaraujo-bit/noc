@@ -268,3 +268,11 @@ Testes com o APK de release (R8, com.noc.app 1.1.0) pareado ao Companion 1.1.0 i
   inteira (agora o alfa só vale quando varia); (2) sem contexto, "um gorro de lã vermelho" virou uma criança de gorro → edições
   reescritas com a cena da imagem de origem (modo "edit"): "an orange cat ... wearing a red wool hat" ✔, resto intacto ✔.
 - tools/dev.sh install agora para quando o build falha (antes instalava o APK velho em silêncio).
+## FLUX real (baixado pelo Companion do usuário com a conta HF) — BUGS da fase 3 corrigidos
+- As 2 tentativas do usuário às 17:06/17:18 falharam por falta de VRAM: no modo "swap" o T5-XXL subia em bf16 (9,5 GB) por
+  cima do transformer fp8 (14,9 GB). Agora o T5 fica guardado em fp8 (camadas `wo` em bf16: o T5 converte a ativação para o
+  tipo do `wo`, em fp8 quebrava) e só sobe para codificar. Medido: residente 14,6 GiB, pico 21 GiB, 1,3 s/passo a 832×1216.
+- Reescritor de prompt com o FLUX carregado prendia 4,4 GB do Qwen (limpeza antes de soltar a referência) → OOM na tarefa
+  seguinte. Corrigido. Otimização inicial do FLUX estourou o limite de 1 h no PC do usuário (disco ocupado) → 3 h.
+- Testado: FLUX txt2img, variação e pincel (worker) e P10 E2E (gera + edita com o Qwen carregado, sem recuperação de VRAM).
+## Suíte E2E completa: 81/81 (+ P10) — fases 1 a 4 com LM Studio, relay, GPU e modelos reais.

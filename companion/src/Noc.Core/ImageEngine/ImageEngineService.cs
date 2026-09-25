@@ -704,7 +704,7 @@ public sealed class ImageEngineService : IAsyncDisposable
             {
                 ["cmd"] = "optimize", ["engine"] = def.Engine, ["path"] = dir, ["cache"] = ImagePaths.CacheDir(def, rev),
                 ["transformer"] = lowVram ? "fp8" : def.Defaults.Transformer,
-            }, ct, TimeSpan.FromMinutes(60));
+            }, ct, TimeSpan.FromHours(3)); // prioridade baixa: com o disco ocupado, o FLUX passou de 1 h (medido)
             if (r["ev"]?.GetValue<string>() == "error") throw WorkerError(r);
             Trace?.Invoke($"{def.Id} otimizado ({(lowVram ? "econômico" : "normal")}) em {sw.Elapsed.TotalSeconds:0} s");
         }

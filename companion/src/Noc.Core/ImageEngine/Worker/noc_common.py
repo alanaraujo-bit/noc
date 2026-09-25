@@ -362,7 +362,8 @@ def te_to_fp8(module):
     """Codificador de texto na GPU com pesos das camadas lineares em fp8 (cálculo em bf16). Embeddings e normas ficam em bf16."""
     from diffusers.hooks import apply_layerwise_casting
     module.to("cuda")
-    apply_layerwise_casting(module, storage_dtype=FP8, compute_dtype=BF16, skip_modules_pattern=("norm", "embed", "shared"))
+    # "wo": o T5 converte a ativação para o tipo do peso wo antes de usá-lo — em fp8 a ativação viraria fp8 e quebraria
+    apply_layerwise_casting(module, storage_dtype=FP8, compute_dtype=BF16, skip_modules_pattern=("norm", "embed", "shared", r"\.wo$"))
     free_cuda()
     return module
 

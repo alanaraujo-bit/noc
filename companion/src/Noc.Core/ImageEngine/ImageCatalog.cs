@@ -182,8 +182,9 @@ public static class ImageCatalog
         Defaults = new ImageDefaults
         {
             Steps = [20, 28, 40], Guidance = 3.5, GuidanceAdjustable = true, GuidanceMin = 1.5, GuidanceMax = 6,
+            // medido com o FLUX real: residente 14,6 GiB, pico 21 GiB (o T5 em fp8 sobe só para codificar)
             StepsMin = 12, StepsMax = 50, Transformer = "fp8", TextEncoder = "swap", TransformerGiB = 11.1,
-            ResidentGiB = 12.7, PeakExtraGiB = 3.0, NativePortuguese = false, MaxPixels = 1536L * 1536,
+            ResidentGiB = 14.6, PeakExtraGiB = 6.4, NativePortuguese = false, MaxPixels = 1536L * 1536,
         },
         Caps = new ModelCaps { Img2Img = true, Inpaint = true, Outpaint = false },
     };
