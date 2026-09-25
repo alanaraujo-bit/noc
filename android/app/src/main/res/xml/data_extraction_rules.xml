@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Privacidade: conversas nunca vão para backup em nuvem nem são copiadas para outro aparelho. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root"/><exclude domain="database"/><exclude domain="sharedpref"/><exclude domain="file"/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root"/><exclude domain="database"/><exclude domain="sharedpref"/><exclude domain="file"/>
+    </device-transfer>
+</data-extraction-rules>

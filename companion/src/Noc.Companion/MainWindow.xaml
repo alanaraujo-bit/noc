@@ -1,0 +1,515 @@
+<Window x:Class="Noc.Companion.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:s="clr-namespace:Noc.Companion.Services"
+        Title="Noc Companion" Width="1060" Height="740" MinWidth="880" MinHeight="620"
+        Background="{DynamicResource Bg}" WindowStartupLocation="CenterScreen"
+        Icon="pack://application:,,,/Assets/noc.ico"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Ideal">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="44" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <s:EqualsConverter x:Key="Eq"/>
+        <s:NotConverter x:Key="Not"/>
+        <s:TextVisConverter x:Key="TextVis"/>
+        <s:FractionConverter x:Key="Frac"/>
+        <s:LevelBrushConverter x:Key="LevelBrush"/>
+
+        <Style x:Key="CaptionBtn" TargetType="Button">
+            <Setter Property="Width" Value="46"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Foreground" Value="{DynamicResource Text2}"/>
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="Transparent"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Icon" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Width" Value="22"/>
+        </Style>
+
+        <Style x:Key="Chip" TargetType="RadioButton">
+            <Setter Property="FontFamily" Value="{StaticResource Geist}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="{DynamicResource Text2}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="bd" CornerRadius="10" Padding="12,7" Background="{DynamicResource Surface2}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource Text}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Bg}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Linha de ajuste: título + descrição à esquerda, controle à direita -->
+        <Style x:Key="SettingRow" TargetType="Border">
+            <Setter Property="Padding" Value="20,14"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="232"/>
+            <ColumnDefinition/>
+        </Grid.ColumnDefinitions>
+
+        <!-- barra lateral -->
+        <DockPanel Grid.Column="0" Margin="18,18,6,18">
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,4,0,28">
+                <Ellipse Width="9" Height="9" Fill="{DynamicResource Accent}" VerticalAlignment="Center" Margin="0,4,8,0"/>
+                <TextBlock Text="noc" Style="{StaticResource H2}" FontSize="32"/>
+                <TextBlock Text="companion" Style="{StaticResource Label}" VerticalAlignment="Bottom" Margin="8,0,0,9"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Bottom" Margin="10,0,0,0">
+                <TextBlock Text="{Binding PcName}" Style="{StaticResource Title}" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="{Binding PcIdShort}" Style="{StaticResource Mono}" Margin="0,3,0,0" ToolTip="Identidade deste PC — confira no app"/>
+                <TextBlock Text="{Binding Version}" Style="{StaticResource Mono}" Margin="0,2,0,0"/>
+            </StackPanel>
+            <StackPanel>
+                <RadioButton Style="{StaticResource NavItem}" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=overview}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE80F;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Visão geral" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
+                </RadioButton>
+                <RadioButton Style="{StaticResource NavItem}" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=devices}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE8EA;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Dispositivos" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
+                </RadioButton>
+                <RadioButton Style="{StaticResource NavItem}" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=activity}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE81C;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Atividade" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
+                </RadioButton>
+                <RadioButton Style="{StaticResource NavItem}" IsChecked="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=settings}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE713;" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/><TextBlock Text="Ajustes" Margin="10,0,0,0" FontFamily="{StaticResource Geist}"/></StackPanel>
+                </RadioButton>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- conteúdo -->
+        <Grid Grid.Column="1">
+            <!-- botões de janela -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Panel.ZIndex="5">
+                <Button Style="{StaticResource CaptionBtn}" Content="&#xE921;" Click="Minimize_Click" ToolTip="Minimizar"/>
+                <Button Style="{StaticResource CaptionBtn}" Content="&#xE8BB;" Click="Close_Click" ToolTip="Fechar (continua na bandeja)"/>
+            </StackPanel>
+
+            <!-- Visão geral -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=overview}">
+                <StackPanel Margin="28,44,36,32">
+                    <Grid>
+                        <StackPanel>
+                            <TextBlock Text="{Binding Greeting}" Style="{StaticResource Display}"/>
+                            <TextBlock Text="{Binding Headline}" Style="{StaticResource DisplayItalic}" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <Button Style="{StaticResource Primary}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Height="46" Padding="22,0"
+                                Command="{Binding OpenPairing}" WindowChrome.IsHitTestVisibleInChrome="True">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE8EA;" Foreground="{DynamicResource OnAccent}" FontSize="15"/>
+                                <TextBlock Text="Parear celular" Margin="6,0,0,0" FontFamily="{StaticResource Geist}" FontWeight="Medium"/>
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+
+                    <!-- atividade ao vivo -->
+                    <Border Margin="0,22,0,0" Padding="18,12" CornerRadius="14" Background="{DynamicResource AccentSoft}"
+                            Visibility="{Binding Generating, Converter={StaticResource Vis}}">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Style="{StaticResource Dot}" Fill="{DynamicResource Accent}">
+                                <Ellipse.Triggers>
+                                    <EventTrigger RoutedEvent="Loaded">
+                                        <BeginStoryboard><Storyboard RepeatBehavior="Forever" AutoReverse="True"><DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.3" Duration="0:0:0.8"/></Storyboard></BeginStoryboard>
+                                    </EventTrigger>
+                                </Ellipse.Triggers>
+                            </Ellipse>
+                            <TextBlock Text="{Binding ActivityNow}" Style="{StaticResource Base}" Margin="10,0,0,0" FontWeight="Medium"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Grid Margin="0,22,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="14"/><RowDefinition/><RowDefinition Height="14"/><RowDefinition/></Grid.RowDefinitions>
+
+                        <!-- LM Studio -->
+                        <Border Style="{StaticResource Tile}" Grid.Row="0" Grid.Column="0">
+                            <StackPanel>
+                                <TextBlock Text="LM STUDIO" Style="{StaticResource Label}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Ellipse Style="{StaticResource Dot}" Fill="{Binding LmColor}"/>
+                                    <TextBlock Text="{Binding LmTitle}" Style="{StaticResource Title}" Margin="10,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding LmDetail}" Style="{StaticResource Body}" Margin="18,4,0,0"/>
+                                <StackPanel Orientation="Horizontal" Margin="12,10,0,0">
+                                    <Button Style="{StaticResource Secondary}" Content="Iniciar LM Studio" Height="34" Command="{Binding StartLm}"
+                                            Visibility="{Binding LmStopped, Converter={StaticResource Vis}}"/>
+                                    <Button Style="{StaticResource Ghost}" Content="Abrir LM Studio" Command="{Binding OpenLmStudio}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Modelo -->
+                        <Border Style="{StaticResource Tile}" Grid.Row="0" Grid.Column="2">
+                            <StackPanel>
+                                <TextBlock Text="MODELO" Style="{StaticResource Label}"/>
+                                <TextBlock Text="{Binding ModelTitle}" Style="{StaticResource Title}" Margin="0,8,0,0" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{Binding ModelDetail}" Style="{StaticResource Mono}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Celulares -->
+                        <Border Style="{StaticResource Tile}" Grid.Row="2" Grid.Column="0">
+                            <StackPanel>
+                                <TextBlock Text="CELULAR" Style="{StaticResource Label}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Ellipse Style="{StaticResource Dot}" Fill="{Binding PhonesColor}"/>
+                                    <TextBlock Text="{Binding PhonesTitle}" Style="{StaticResource Title}" Margin="10,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding PhonesDetail}" Style="{StaticResource Body}" Margin="18,4,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Acesso remoto -->
+                        <Border Style="{StaticResource Tile}" Grid.Row="2" Grid.Column="2">
+                            <StackPanel>
+                                <TextBlock Text="FORA DE CASA" Style="{StaticResource Label}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Ellipse Style="{StaticResource Dot}" Fill="{Binding RemoteColor}"/>
+                                    <TextBlock Text="{Binding RemoteTitle}" Style="{StaticResource Title}" Margin="10,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding RemoteDetail}" Style="{StaticResource Body}" Margin="18,4,0,0"/>
+                                <Button Style="{StaticResource Ghost}" Content="Testar acesso remoto" HorizontalAlignment="Left" Margin="8,6,0,0" Command="{Binding TestRemote}"/>
+                                <TextBlock Text="{Binding TestResult}" Style="{StaticResource Body}" FontSize="12.5" Margin="18,0,0,0" Visibility="{Binding TestResult, Converter={StaticResource TextVis}}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Rede local -->
+                        <Border Style="{StaticResource Tile}" Grid.Row="4" Grid.Column="0">
+                            <StackPanel>
+                                <TextBlock Text="NA MESMA WI-FI" Style="{StaticResource Label}"/>
+                                <TextBlock Text="{Binding LanTitle}" Style="{StaticResource Title}" Margin="0,8,0,0"/>
+                                <TextBlock Text="{Binding LanDetail}" Style="{StaticResource Mono}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- GPU -->
+                        <Border Style="{StaticResource Tile}" Grid.Row="4" Grid.Column="2">
+                            <StackPanel>
+                                <TextBlock Text="GPU" Style="{StaticResource Label}"/>
+                                <TextBlock Text="{Binding GpuTitle}" Style="{StaticResource Title}" Margin="0,8,0,0"/>
+                                <Grid Margin="0,10,0,0" Height="6" Width="220" HorizontalAlignment="Left" Visibility="{Binding HasGpu, Converter={StaticResource Vis}}">
+                                    <Border CornerRadius="3" Background="{DynamicResource Surface2}"/>
+                                    <Border CornerRadius="3" Background="{DynamicResource Text2}" HorizontalAlignment="Left"
+                                            Width="{Binding Vram, Converter={StaticResource Frac}, ConverterParameter=220}"/>
+                                </Grid>
+                                <TextBlock Text="{Binding GpuDetail}" Style="{StaticResource Mono}" Margin="0,6,0,0"/>
+                                <TextBlock Text="Sem GPU NVIDIA detectada" Style="{StaticResource Body}" Margin="0,4,0,0"
+                                           Visibility="{Binding HasGpu, Converter={StaticResource Not}}"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <TextBlock Style="{StaticResource Body}" Margin="4,24,0,0" FontSize="12.5"
+                               Text="Suas conversas ficam no seu celular e a inferência acontece aqui. O serviço remoto só repassa dados cifrados — ele não consegue ler nada."/>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Dispositivos -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=devices}">
+                <StackPanel Margin="28,44,36,32">
+                    <Grid>
+                        <StackPanel>
+                            <TextBlock Text="Dispositivos" Style="{StaticResource Display}"/>
+                            <TextBlock Text="Só estes aparelhos podem usar as IAs deste PC." Style="{StaticResource Body}" Margin="0,4,0,0"/>
+                        </StackPanel>
+                        <Button Style="{StaticResource Primary}" Content="Parear celular" HorizontalAlignment="Right" VerticalAlignment="Bottom" Command="{Binding OpenPairing}"/>
+                    </Grid>
+                    <Border Style="{StaticResource Tile}" Margin="0,24,0,0" Padding="0" Visibility="{Binding NoDevices, Converter={StaticResource Not}}">
+                        <ItemsControl ItemsSource="{Binding Devices}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Padding="20,16" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <Ellipse Margin="0,0,14,0">
+                                                <Ellipse.Style>
+                                                    <Style TargetType="Ellipse" BasedOn="{StaticResource Dot}">
+                                                        <Setter Property="Fill" Value="{DynamicResource Surface3}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Online}" Value="True"><Setter Property="Fill" Value="{DynamicResource Ok}"/></DataTrigger>
+                                                            <DataTrigger Binding="{Binding Revoked}" Value="True"><Setter Property="Fill" Value="{DynamicResource Err}"/></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Ellipse.Style>
+                                            </Ellipse>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding Name}" Style="{StaticResource Title}"/>
+                                                <TextBlock Text="{Binding Detail}" Style="{StaticResource Mono}" Margin="0,3,0,0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                                <Button Style="{StaticResource Ghost}" Content="Desconectar" Foreground="{DynamicResource Text2}"
+                                                        Command="{Binding DataContext.Disconnect, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Id}"
+                                                        Visibility="{Binding Online, Converter={StaticResource Vis}}"/>
+                                                <Button Style="{StaticResource Danger}" Content="Revogar acesso"
+                                                        Command="{Binding DataContext.Revoke, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Id}"
+                                                        Visibility="{Binding Revoked, Converter={StaticResource Not}}"/>
+                                                <Button Style="{StaticResource Ghost}" Content="Remover da lista" Foreground="{DynamicResource Text2}"
+                                                        Command="{Binding DataContext.Forget, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding Id}"
+                                                        Visibility="{Binding Revoked, Converter={StaticResource Vis}}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Border>
+                    <Border Style="{StaticResource Tile}" Margin="0,24,0,0" Padding="28" Visibility="{Binding NoDevices, Converter={StaticResource Vis}}">
+                        <StackPanel>
+                            <TextBlock Text="Nenhum celular pareado ainda" Style="{StaticResource Title}"/>
+                            <TextBlock Text="Instale o Noc no Android, toque em “Parear computador” e leia o QR Code que aparece aqui." Style="{StaticResource Body}" Margin="0,6,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Style="{StaticResource Body}" FontSize="12.5" Margin="4,16,0,0"
+                               Text="Revogar derruba na hora qualquer conexão aberta do aparelho e impede que ele volte a se conectar sem parear de novo."/>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Atividade -->
+            <Grid Margin="28,44,36,24" Visibility="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=activity}">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
+                <TextBlock Text="Atividade" Style="{StaticResource Display}"/>
+                <Grid Grid.Row="1" Margin="0,20,0,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource Tile}" Padding="0">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="AGORA NESTE PC" Style="{StaticResource Label}" Margin="20,18,0,8"/>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding Activity}" Margin="20,0,20,16">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,5">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="54"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Time}" Style="{StaticResource Mono}"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Text}" Style="{StaticResource Base}" TextWrapping="Wrap" FontSize="13"
+                                                           Foreground="{Binding Level, Converter={StaticResource LevelBrush}}"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
+                    <Border Style="{StaticResource Tile}" Padding="0" Grid.Column="2">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="SEGURANÇA" Style="{StaticResource Label}" Margin="20,18,0,8"/>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding Security}" Margin="20,0,20,16">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,5">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="92"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Time}" Style="{StaticResource Mono}"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Text}" Style="{StaticResource Base}" TextWrapping="Wrap" FontSize="13"
+                                                           Foreground="{Binding Level, Converter={StaticResource LevelBrush}}"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </Grid>
+
+            <!-- Ajustes -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding Page, Converter={StaticResource Eq}, ConverterParameter=settings}">
+                <StackPanel Margin="28,44,36,32">
+                    <TextBlock Text="Ajustes" Style="{StaticResource Display}"/>
+                    <Border Style="{StaticResource Tile}" Padding="0" Margin="0,22,0,0">
+                        <StackPanel>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel>
+                                        <TextBlock Text="Nome deste PC" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Como ele aparece no celular." Style="{StaticResource Body}"/>
+                                    </StackPanel>
+                                    <TextBox Style="{StaticResource Field}" Width="240" HorizontalAlignment="Right" Text="{Binding SetName, UpdateSourceTrigger=PropertyChanged}" MaxLength="40"/>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel>
+                                        <TextBlock Text="Iniciar com o Windows" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Ligue o PC e o Noc já estará pronto para o celular." Style="{StaticResource Body}"/>
+                                    </StackPanel>
+                                    <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetAutostart}"/>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel>
+                                        <TextBlock Text="Começar escondido na bandeja" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Ao iniciar com o Windows, não abre esta janela." Style="{StaticResource Body}"/>
+                                    </StackPanel>
+                                    <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetMinimized}"/>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel Margin="0,0,70,0">
+                                        <TextBlock Text="Acesso fora de casa" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Permite usar pelo 4G/5G ou outra rede, com criptografia de ponta a ponta." Style="{StaticResource Body}"/>
+                                    </StackPanel>
+                                    <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetRemote}"/>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel Margin="0,0,70,0">
+                                        <TextBlock Text="Conexão direta na rede local" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Na mesma Wi-Fi, o celular fala direto com o PC: mais rápido e funciona sem internet." Style="{StaticResource Body}"/>
+                                    </StackPanel>
+                                    <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetLan}"/>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel Margin="0,0,70,0">
+                                        <TextBlock Text="Ligar o servidor do LM Studio sozinho" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Se o LM Studio estiver parado quando o Noc abrir, ele é iniciado automaticamente." Style="{StaticResource Body}"/>
+                                    </StackPanel>
+                                    <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetAutoLm}"/>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel Margin="0,0,70,0">
+                                        <TextBlock Text="Um modelo por vez" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Ao trocar de modelo pelo celular, descarrega o anterior para não estourar a memória de vídeo." Style="{StaticResource Body}"/>
+                                    </StackPanel>
+                                    <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetSingle}"/>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}">
+                                <Grid>
+                                    <StackPanel>
+                                        <TextBlock Text="Contexto padrão" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="Usado quando o celular pede um modelo sem definir o contexto." Style="{StaticResource Body}"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                        <RadioButton Style="{StaticResource Chip}" Content="8k" GroupName="ctx" IsChecked="{Binding SetContext, Converter={StaticResource Eq}, ConverterParameter=8192}"/>
+                                        <RadioButton Style="{StaticResource Chip}" Content="16k" GroupName="ctx" IsChecked="{Binding SetContext, Converter={StaticResource Eq}, ConverterParameter=16384}"/>
+                                        <RadioButton Style="{StaticResource Chip}" Content="32k" GroupName="ctx" IsChecked="{Binding SetContext, Converter={StaticResource Eq}, ConverterParameter=32768}"/>
+                                        <RadioButton Style="{StaticResource Chip}" Content="64k" GroupName="ctx" IsChecked="{Binding SetContext, Converter={StaticResource Eq}, ConverterParameter=65536}"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                            <Border Style="{StaticResource SettingRow}" BorderThickness="0">
+                                <Grid>
+                                    <TextBlock Text="Tema" Style="{StaticResource Title}" VerticalAlignment="Center"/>
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <RadioButton Style="{StaticResource Chip}" Content="Sistema" GroupName="theme" IsChecked="{Binding SetTheme, Converter={StaticResource Eq}, ConverterParameter=system}"/>
+                                        <RadioButton Style="{StaticResource Chip}" Content="Claro" GroupName="theme" IsChecked="{Binding SetTheme, Converter={StaticResource Eq}, ConverterParameter=light}"/>
+                                        <RadioButton Style="{StaticResource Chip}" Content="Escuro" GroupName="theme" IsChecked="{Binding SetTheme, Converter={StaticResource Eq}, ConverterParameter=dark}"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Tile}" Margin="0,14,0,0">
+                        <Grid>
+                            <StackPanel>
+                                <TextBlock Text="Identidade deste PC" Style="{StaticResource Title}"/>
+                                <TextBlock Text="{Binding PcIdShort}" Style="{StaticResource Mono}" FontSize="14" Foreground="{DynamicResource Text}" Margin="0,6,0,0"/>
+                                <TextBlock Text="Guardada protegida pelo Windows (DPAPI). O celular confere esta identidade a cada conexão." Style="{StaticResource Body}" Margin="0,6,0,0"/>
+                            </StackPanel>
+                            <Button Style="{StaticResource Secondary}" Content="Abrir pasta de dados" HorizontalAlignment="Right" VerticalAlignment="Top" Command="{Binding OpenData}"/>
+                        </Grid>
+                    </Border>
+                    <TextBlock Text="Minha IA. Meu computador. Meus dados." Style="{StaticResource DisplayItalic}" FontSize="22" Margin="4,26,0,0"/>
+                </StackPanel>
+            </ScrollViewer>
+
+        </Grid>
+
+        <!-- sobreposição: pareamento -->
+        <Grid Visibility="{Binding IsPairingOpen, Converter={StaticResource Vis}}" Panel.ZIndex="10" Grid.ColumnSpan="2">
+            <Border Background="{DynamicResource Scrim}" MouseDown="Scrim_MouseDown"/>
+            <Border Background="{DynamicResource Bg}" CornerRadius="26" Width="460" Padding="30,28" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="Parear celular" Style="{StaticResource H2}"/>
+                        <Button Style="{StaticResource CaptionBtn}" HorizontalAlignment="Right" Content="&#xE8BB;" Command="{Binding ClosePairing}" ToolTip="Fechar"/>
+                    </Grid>
+                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                        <RadioButton Style="{StaticResource Chip}" Content="QR Code" GroupName="pm" IsChecked="{Binding PairMode, Converter={StaticResource Eq}, ConverterParameter=qr}"/>
+                        <RadioButton Style="{StaticResource Chip}" Content="Código" GroupName="pm" IsChecked="{Binding PairMode, Converter={StaticResource Eq}, ConverterParameter=code}"/>
+                    </StackPanel>
+                    <Border Margin="0,18,0,0" Background="White" CornerRadius="20" Padding="14" HorizontalAlignment="Center"
+                            Visibility="{Binding PairMode, Converter={StaticResource Eq}, ConverterParameter=qr}">
+                        <Grid>
+                            <Image Source="{Binding QrImage}" Width="260" Height="260" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                            <Border Background="#E6FFFFFF" Visibility="{Binding PairExpired, Converter={StaticResource Vis}}">
+                                <Button Style="{StaticResource Primary}" Content="Gerar novo código" VerticalAlignment="Center" HorizontalAlignment="Center" Command="{Binding RenewPairing}"/>
+                            </Border>
+                        </Grid>
+                    </Border>
+                    <Border Margin="0,18,0,0" Background="{DynamicResource Surface}" CornerRadius="20" Padding="20,26"
+                            Visibility="{Binding PairMode, Converter={StaticResource Eq}, ConverterParameter=code}">
+                        <TextBlock Text="{Binding PairCode}" FontFamily="{StaticResource GeistMono}" FontSize="44" HorizontalAlignment="Center" Foreground="{DynamicResource Text}"/>
+                    </Border>
+                    <TextBlock Text="{Binding PairHint}" Style="{StaticResource Body}" Margin="0,16,0,0" TextAlignment="Center"/>
+                    <Grid Margin="0,14,0,0">
+                        <TextBlock Text="{Binding PairExpires}" Style="{StaticResource Mono}" VerticalAlignment="Center"/>
+                        <Button Style="{StaticResource Ghost}" Content="Gerar novo" HorizontalAlignment="Right" Command="{Binding RenewPairing}"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- sobreposição: aprovar celular (pareamento por código) -->
+        <Grid Visibility="{Binding IsApprovalOpen, Converter={StaticResource Vis}}" Panel.ZIndex="11" Grid.ColumnSpan="2">
+            <Border Background="{DynamicResource Scrim}"/>
+            <Border Background="{DynamicResource Bg}" CornerRadius="26" Width="460" Padding="30,28" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <StackPanel>
+                    <TextBlock Text="Novo celular quer se conectar" Style="{StaticResource H2}" TextWrapping="Wrap"/>
+                    <TextBlock Text="{Binding ApprovalDevice}" Style="{StaticResource Title}" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                    <TextBlock Text="CÓDIGO DE VERIFICAÇÃO" Style="{StaticResource Label}" Margin="0,22,0,6" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding ApprovalSas}" FontFamily="{StaticResource GeistMono}" FontSize="46" HorizontalAlignment="Center" Foreground="{DynamicResource Text}"/>
+                    <TextBlock Text="Aprove só se o celular mostrar exatamente o mesmo número. Se for diferente, alguém pode estar tentando se passar pelo seu aparelho."
+                               Style="{StaticResource Body}" TextAlignment="Center" Margin="0,14,0,0"/>
+                    <Grid Margin="0,22,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                        <Button Style="{StaticResource Secondary}" Content="Recusar" Height="46" Command="{Binding Reject}"/>
+                        <Button Grid.Column="2" Style="{StaticResource Primary}" Content="Aprovar" Height="46" Command="{Binding Approve}"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

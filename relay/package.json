@@ -1,0 +1,19 @@
+{
+  "name": "noc-relay",
+  "version": "1.0.0",
+  "description": "Noc relay — encaminhador cifrado",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "ws": "^8.21.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "private": true
+}

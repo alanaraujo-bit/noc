@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ws:// é permitido só porque a conexão direta na rede local não tem TLS. Isso é seguro aqui:
+  todo o conteúdo já trafega cifrado de ponta a ponta pelo protocolo Noc (ECDH P-256 + AES-256-GCM,
+  com a chave do PC fixada no pareamento). O relay na internet usa wss://.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors><certificates src="system"/></trust-anchors>
+    </base-config>
+</network-security-config>

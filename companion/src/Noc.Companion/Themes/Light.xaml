@@ -1,0 +1,22 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="Bg" Color="#F5F3EF"/>
+    <SolidColorBrush x:Key="Surface" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Surface2" Color="#EDEAE4"/>
+    <SolidColorBrush x:Key="Surface3" Color="#E3DFD7"/>
+    <SolidColorBrush x:Key="Line" Color="#E2DED6"/>
+    <SolidColorBrush x:Key="Text" Color="#191816"/>
+    <SolidColorBrush x:Key="Text2" Color="#5C5852"/>
+    <SolidColorBrush x:Key="Text3" Color="#8C877F"/>
+    <SolidColorBrush x:Key="Accent" Color="#C45A1A"/>
+    <SolidColorBrush x:Key="OnAccent" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="AccentSoft" Color="#F7E4D6"/>
+    <SolidColorBrush x:Key="Ok" Color="#2C8653"/>
+    <SolidColorBrush x:Key="Warn" Color="#A86F12"/>
+    <SolidColorBrush x:Key="Err" Color="#BF3B27"/>
+    <SolidColorBrush x:Key="OkSoft" Color="#DDEFE3"/>
+    <SolidColorBrush x:Key="WarnSoft" Color="#F6EBD3"/>
+    <SolidColorBrush x:Key="ErrSoft" Color="#F7DEDA"/>
+    <SolidColorBrush x:Key="Scrim" Color="#66000000"/>
+    <SolidColorBrush x:Key="Hover" Color="#0C000000"/>
+</ResourceDictionary>

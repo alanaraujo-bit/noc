@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Noc</AssemblyName>
+    <RootNamespace>Noc.Companion</RootNamespace>
+    <ApplicationIcon>Assets\noc.ico</ApplicationIcon>
+    <Version>1.0.0</Version>
+    <Product>Noc Companion</Product>
+    <Company>Noc</Company>
+    <Description>Noc Companion — acesso seguro às suas IAs locais pelo celular</Description>
+    <SatelliteResourceLanguages>pt-BR</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Fonts\*.ttf" />
+    <Resource Include="Assets\noc.ico" />
+    <Resource Include="Assets\*.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Noc.Core\Noc.Core.csproj" />
+  </ItemGroup>
+
+</Project>
