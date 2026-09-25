@@ -2,7 +2,7 @@
 ; Compilar: ISCC.exe installer\noc-companion.iss   (antes: dotnet publish → dist\companion\Noc.exe)
 
 #define AppName "Noc Companion"
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 #define AppExe "Noc.exe"
 #define FirewallRule "Noc Companion"
 

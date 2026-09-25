@@ -201,3 +201,19 @@ Testes com o APK de release (R8, com.noc.app 1.1.0) pareado ao Companion 1.1.0 i
   Agora, sem saber a VRAM, cada modelo fica com a quantização mais leve, e a leitura da GPU refaz a distribuição. Teste unitário
   (VRAM desconhecida → Q4; 24 GB → Q4; 48 GB → Q8).
 - Testes: Companion 46/46 (unitários + E2E com LM Studio e relay reais), Android 17/17 unitários.
+
+---
+# FASE 3 — Motor de imagem local (2026-09-25) · versão 1.2.0
+- Motor: worker Python próprio (Diffusers 0.40, PyTorch 2.14 cu130, Python 3.12 isolado em F:\Noc\ImageEngine), controlado pelo
+  Companion só por stdin/stdout (sem porta), dentro de Job Object. Instalação automática do runtime (uv fixado + SHA-256).
+- Z-Image Turbo oficial (revisão f332072, 32,9 GB, SHA-256 de cada arquivo). Cópias locais de carga rápida: transformer bf16 +
+  codificador de texto Qwen3-4B em fp8 (imagem praticamente idêntica ao bf16; codifica em 0,1 s em vez de 3-4 s).
+- Benchmark real (RTX 3090 Ti): 1024², 832×1216, 1216×832 → 8,9-9,5 s por imagem (9 passos, ~0,91 s/passo); carga 4 s (cache do
+  Windows) / ~15 s a frio (era 37 s); pico 19,4 GB; 8 gerações seguidas sem vazamento. Modo econômico (fp8): 0,98 s/passo, pico 14 GB.
+- Português direto falha (ignorou "brutalista moderna"); tradução interna pelo Qwen3-4B do próprio Z-Image acerta → sempre traduz.
+- VRAM: LLM ocioso sai da GPU para a imagem e volta sozinho depois; nunca os dois juntos (teste da corrida); modo econômico quando
+  apertado; OOM → libera, modo econômico, 1 tentativa; trava contra derramar para a RAM compartilhada (WDDM não dá OOM).
+- Testes E2E (NOC_E2E=1): A0-A9, B1-B2 passando. Emulador: A, D, E, F, G, I, J, K, L passando.
+- FLUX.1 Dev: integrado e testado com um FLUX minúsculo público (mesma arquitetura); falta a autorização do usuário no Hugging Face.
+- Hardware: duas quedas abruptas do PC hoje sob carga de GPU (Kernel-Power 41; WHEA fatal às 14:54; reset do driver NVIDIA 153 às
+  08:37 e 14:34; erros PCIe corrigidos desde 05/09). Escrita durável + cópia de segurança dos ajustes adicionadas depois disso.

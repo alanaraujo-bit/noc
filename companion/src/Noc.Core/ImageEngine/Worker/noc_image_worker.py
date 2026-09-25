@@ -134,6 +134,19 @@ def rss_mb():
         return {}
 
 
+def guard_vram(margin_mb=320):
+    """
+    Trava de segurança: no Windows (WDDM) passar da VRAM não dá erro — o driver derrama para a RAM compartilhada,
+    a geração fica dezenas de vezes mais lenta e pode travar o PC. Limita este processo ao que ele já reservou
+    mais o que está livre agora na GPU: passar disso vira "out of memory" limpo, que o Companion sabe recuperar.
+    """
+    if not torch.cuda.is_available():
+        return
+    free, total = torch.cuda.mem_get_info()
+    allowed = torch.cuda.memory_reserved() + free - margin_mb * 1024 * 1024
+    torch.cuda.set_per_process_memory_fraction(max(0.05, min(0.98, allowed / total)))
+
+
 def free_cuda():
     gc.collect()
     if torch.cuda.is_available():
@@ -640,6 +653,7 @@ def cmd_load(c):
     if not os.path.isdir(path):
         raise WorkerError("model_missing", "pasta do modelo não encontrada")
     torch.cuda.reset_peak_memory_stats()
+    guard_vram()
     eng = ENGINES[kind]()
     eng.load(path, precision, te_mode, cache, lambda stage: send("load_progress", id=c.get("id"), stage=stage))
     State.engine = eng
@@ -677,6 +691,7 @@ def cmd_generate(c):
     State.current_id = job
     t0 = time.time()
     torch.cuda.reset_peak_memory_stats()
+    guard_vram()
     send("stage", id=job, stage="encoding")
     embeds = eng.encode_prompt(prompt)
     if is_cancelled(job):
@@ -784,6 +799,7 @@ def cmd_optimize(c):
 def cmd_rewrite(c):
     job = c.get("id")
     t0 = time.time()
+    guard_vram()
     text = State.rewriter.rewrite(c["text"], c.get("mode", "translate"), c["path"], c.get("tokenizer") or c["path"], State.engine)
     send("rewritten", id=job, text=text, ms=int((time.time() - t0) * 1000))
 
