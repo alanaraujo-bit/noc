@@ -789,6 +789,8 @@ class Runner:
         mcrop = mask.crop(box)
         tw, th = fit_area(crop.width, crop.height, 1024 * 1024)
         blur = max(4, int(min(tw, th) / 128))
+        if placed is not None:
+            blur = max(blur, int(min(tw, th) / 24))  # expansão: transição larga entre o original e o novo
         ctl = None
         if ctl_spec and self.sdxl:
             src = load_rgb(ctl_spec["image"]) if ctl_spec.get("image") else crop

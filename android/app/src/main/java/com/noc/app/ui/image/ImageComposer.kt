@@ -127,6 +127,17 @@ fun ImageModeBar(
             Icon(Icons.Rounded.AutoAwesome, null, tint = c.accent, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(8.dp))
             Text("Criar imagem", style = MaterialTheme.typography.titleSmall, color = c.text, modifier = Modifier.weight(1f))
+            // Estúdio sempre visível (não se perde no fim da fila de opções)
+            Row(
+                Modifier.clip(RoundedCornerShape(50)).background(if (options.hasAdvanced) c.accentSoft else c.surface2).pressable(onClick = onStudio)
+                    .padding(horizontal = 12.dp, vertical = 7.dp).semantics { contentDescription = "Estúdio: controles avançados" },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Tune, null, tint = if (options.hasAdvanced) c.accent else c.text2, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if (options.raw) "Estúdio · RAW" else "Estúdio", style = MaterialTheme.typography.labelMedium, color = if (options.hasAdvanced) c.accent else c.text)
+            }
+            Spacer(Modifier.width(4.dp))
             Box(Modifier.size(36.dp).clip(CircleShape).pressable(onClick = onClose).semantics { contentDescription = "Sair do modo imagem" }, contentAlignment = Alignment.Center) {
                 Icon(Icons.Rounded.Close, null, tint = c.text3, modifier = Modifier.size(18.dp))
             }
@@ -136,6 +147,8 @@ fun ImageModeBar(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             PillButton(engineChipLabel(options, caps), "Motor", accent = options.model != null, onClick = onEngine)
+            if (lorasOk) PillButton(if (options.loras.isEmpty()) "LoRAs" else "LoRAs · ${options.loras.size}", "LoRAs", icon = Icons.Rounded.Layers, accent = options.loras.isNotEmpty(), onClick = onLoras)
+            if (guidesOk) PillButton("Guia", "Guiar com uma imagem", icon = Icons.Rounded.Image, accent = options.reference != null || options.control != null, onClick = onGuide)
             Selector(formats.firstOrNull { it.id == options.format }?.label ?: if (options.format == "custom") "Personalizado" else "Quadrado", "Formato") { close ->
                 formats.forEach { f ->
                     DropdownMenuItem(
@@ -162,18 +175,7 @@ fun ImageModeBar(
                     DropdownMenuItem(text = { Text(if (n == 1) "1 imagem" else "$n imagens", style = MaterialTheme.typography.bodyMedium, color = c.text) }, onClick = { onChange(options.copy(count = n)); close() })
                 }
             }
-            if (lorasOk) PillButton(if (options.loras.isEmpty()) "LoRAs" else "LoRAs · ${options.loras.size}", "LoRAs", icon = Icons.Rounded.Layers, accent = options.loras.isNotEmpty(), onClick = onLoras)
-            if (guidesOk) PillButton("Guia", "Guiar com uma imagem", icon = Icons.Rounded.Image, accent = options.reference != null || options.control != null, onClick = onGuide)
             if (!options.raw) Toggle("Melhorar prompt", options.enhance) { onChange(options.copy(enhance = !options.enhance)) }
-            Row(
-                Modifier.clip(RoundedCornerShape(50)).background(if (options.hasAdvanced) c.accentSoft else c.surface2).pressable(onClick = onStudio)
-                    .padding(horizontal = 12.dp, vertical = 8.dp).semantics { contentDescription = "Estúdio: controles avançados" },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Rounded.Tune, null, tint = if (options.hasAdvanced) c.accent else c.text2, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(if (options.raw) "Estúdio · RAW" else "Estúdio", style = MaterialTheme.typography.labelMedium, color = if (options.hasAdvanced) c.accent else c.text)
-            }
         }
         // o que está ativo além do básico, visível e fácil de tirar
         val active = options.loras.isNotEmpty() || options.reference != null || options.controlInput != null

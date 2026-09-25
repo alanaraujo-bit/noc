@@ -162,7 +162,8 @@ public static class ImageCatalog
             StepsMin = 4, StepsMax = 16, Transformer = "bf16", TextEncoder = "fp8", TransformerGiB = 11.4,
             ResidentGiB = 16.3, PeakExtraGiB = 3.4, NativePortuguese = false, MaxPixels = 1536L * 1536,
         },
-        Caps = new ModelCaps { Img2Img = true, Inpaint = true, Outpaint = true },
+        // expansão: o pipeline de inpaint do Z-Image não harmoniza a borda (costura dura, medido) → vai para um especialista SDXL
+        Caps = new ModelCaps { Img2Img = true, Inpaint = true, Outpaint = false },
     };
 
     public static readonly ImageModelDef FluxDev = new()
@@ -180,7 +181,7 @@ public static class ImageCatalog
             StepsMin = 12, StepsMax = 50, Transformer = "fp8", TextEncoder = "swap", TransformerGiB = 11.1,
             ResidentGiB = 12.7, PeakExtraGiB = 3.0, NativePortuguese = false, MaxPixels = 1536L * 1536,
         },
-        Caps = new ModelCaps { Img2Img = true, Inpaint = true, Outpaint = true },
+        Caps = new ModelCaps { Img2Img = true, Inpaint = true, Outpaint = false },
     };
 
     // ------------------------------------------------------------------ especialistas SDXL (fase 4)

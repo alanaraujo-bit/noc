@@ -70,6 +70,9 @@ public class Phase4UnitTests
         Assert.Equal("realvisxl-v5", ImageRouter.Choose("qualquer", "standard", 1 << 20, All, null, "realvisxl-v5").Model!.Id);
         Assert.Equal("z-image-turbo", ImageRouter.Choose("um gato no sofá", "standard", 1 << 20, All, null, null).Model!.Id);
         Assert.Equal("flux1-dev", ImageRouter.Choose("um castelo nas nuvens", "high", 1 << 20, All, null, null).Model!.Id);
+        // expandir uma foto do Z-Image: o especialista de fotos faz (o Z-Image deixa costura); pincel continua no Z-Image
+        Assert.Equal("realvisxl-v5", ImageRouter.Choose("x", "standard", 1 << 20, All, null, "z-image-turbo", "outpaint").Model!.Id);
+        Assert.Equal("z-image-turbo", ImageRouter.Choose("x", "standard", 1 << 20, All, null, "z-image-turbo", "inpaint").Model!.Id);
         // sem os especialistas instalados, cai no que houver
         Assert.Equal("z-image-turbo", ImageRouter.Choose("garota anime", "standard", 1 << 20, m => m.Id == "z-image-turbo", null, null).Model!.Id);
     }

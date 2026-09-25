@@ -799,7 +799,10 @@ public sealed class Session : IAsyncDisposable
             (w, h) = SourceSize(source!, p);
         }
         var sourceModel = images.ModelOfImage(source);
-        var (def, note, error) = images.Choose(choice, quality, prompt, op == "txt2img" ? (long)w * h : 1024 * 1024, loraFamily, sourceModel);
+        var (def, note, error) = images.Choose(choice, quality, prompt, op == "txt2img" ? (long)w * h : 1024 * 1024, loraFamily, sourceModel, op);
+        // modelo escolhido à mão que não faz esta edição: o automático acha quem faz (e explica)
+        if (def is not null && op != "txt2img" && !ImageEngine.ImageRouter.CanDo(def, op))
+            (def, note, error) = images.Choose("auto", quality, prompt, 1024 * 1024, loraFamily, def.Id, op);
         if (def is null)
         {
             var (code, msg) = error switch
@@ -812,9 +815,8 @@ public sealed class Session : IAsyncDisposable
             };
             throw new RpcException(code, msg);
         }
-        var caps = def.Caps;
-        if (op == "img2img" && !caps.Img2Img || op == "inpaint" && !caps.Inpaint || op == "outpaint" && !caps.Outpaint)
-            throw new RpcException("unsupported", $"O {def.Name} não faz esta edição.");
+        if (!ImageEngine.ImageRouter.CanDo(def, op))
+            throw new RpcException("unsupported", $"Nenhum modelo instalado no PC faz esta edição ainda.");
         var controlType = p["control"]?["type"]?.GetValue<string>() is "pose" or "depth" or "canny" ? p["control"]!["type"]!.GetValue<string>() : null;
         var reference = ImageRef(p["reference"]?["source"]?.GetValue<string>());
         if ((controlType is not null || reference is not null) && def.Engine != "sdxl")
@@ -838,7 +840,7 @@ public sealed class Session : IAsyncDisposable
         {
             Prompt = prompt, Choice = choice.StartsWith("model:") ? "model" : choice, Model = def.Id, Width = w, Height = h, Format = formatId,
             Quality = quality, Steps = steps, Guidance = guidance, Count = count, Seed = seed, Enhance = p["enhance"]?.GetValue<bool>() ?? false,
-            AutoNote = choice == "auto" ? note : null, Op = op,
+            AutoNote = choice == "auto" || note is not null ? note : null, Op = op,
             Negative = p["negative"]?.GetValue<string>() is { } neg && neg.Length <= 2000 ? neg : null, Raw = p["raw"]?.GetValue<bool>() ?? false,
             Sampler = ImageEngine.Samplers.Valid(p["sampler"]?.GetValue<string>()) && def.Engine == "sdxl" ? p["sampler"]!.GetValue<string>() : null,
             Schedule = ImageEngine.Samplers.ValidSchedule(p["schedule"]?.GetValue<string>()) && def.Engine == "sdxl" ? p["schedule"]!.GetValue<string>() : null,

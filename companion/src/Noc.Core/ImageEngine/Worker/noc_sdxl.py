@@ -225,11 +225,12 @@ def encode_sdxl(pipe, prompt, negative, clip_skip=None):
 # ------------------------------------------------------------------ imagens auxiliares (máscaras, recortes, expansão)
 
 def snap8(v):
-    return max(64, int(round(v / 8.0)) * 8)
+    # múltiplos de 16: o Z-Image e o FLUX exigem (o SDXL aceita qualquer múltiplo de 8)
+    return max(64, int(round(v / 16.0)) * 16)
 
 
 def fit_area(w, h, area=1024 * 1024):
-    """Mesmo formato, área próxima de `area` (o SDXL rende melhor perto de 1 megapixel), múltiplos de 8."""
+    """Mesmo formato, área próxima de `area` (o SDXL rende melhor perto de 1 megapixel), múltiplos de 16."""
     k = math.sqrt(area / float(w * h))
     return snap8(w * k), snap8(h * k)
 
@@ -297,7 +298,7 @@ def outpaint_canvas(img, left, top, right, bottom):
     canvas.paste(img, (left, top))
     mask = Image.new("L", (nw, nh), 255)
     # a borda original entra um pouco na máscara (costura), com transição suave
-    seam = 24
+    seam = max(48, min(W, H) // 12)  # faixa da imagem original refeita junto: esconde a costura
     inner = Image.new("L", (max(1, W - 2 * seam * (left > 0 or right > 0)), max(1, H - 2 * seam * (top > 0 or bottom > 0))), 0)
     mask.paste(0, (left + (seam if left else 0), top + (seam if top else 0), left + W - (seam if right else 0), top + H - (seam if bottom else 0)))
     del inner

@@ -151,7 +151,16 @@ public static class ImageRouter
 
     public sealed record Choice(ImageModelDef? Model, string? Note, string? Error);
 
-    public static Choice Choose(string prompt, string quality, long pixels, Func<ImageModelDef, bool> installed, string? loraFamily, string? sourceModel)
+    public static bool CanDo(ImageModelDef m, string op) => op switch
+    {
+        "img2img" => m.Caps.Img2Img,
+        "inpaint" or "detail" or "hd" => m.Caps.Inpaint,
+        "outpaint" => m.Caps.Outpaint,
+        _ => true,
+    };
+
+    public static Choice Choose(string prompt, string quality, long pixels, Func<ImageModelDef, bool> installed, string? loraFamily, string? sourceModel,
+        string op = "txt2img")
     {
         var z = ImageCatalog.ZImageTurbo;
         var f = ImageCatalog.FluxDev;
@@ -173,9 +182,19 @@ public static class ImageRouter
             var anySdxl = ImageCatalog.Models.FirstOrDefault(m => m.Engine == "sdxl" && Ok(m));
             if (anySdxl is not null) return new Choice(anySdxl, $"LoRA escolhido: {anySdxl.Name}", null);
         }
-        // edição de uma imagem: fica no mesmo modelo quando ele sabe fazer
-        if (sourceModel is not null && ImageCatalog.Find(sourceModel) is { } src && Ok(src))
-            return new Choice(src, $"Mesmo modelo da imagem original: {src.Name}", null);
+        // edição de uma imagem: fica no mesmo modelo quando ele sabe fazer; senão, o especialista da mesma categoria
+        if (sourceModel is not null && ImageCatalog.Find(sourceModel) is { } src)
+        {
+            if (Ok(src) && CanDo(src, op)) return new Choice(src, $"Mesmo modelo da imagem original: {src.Name}", null);
+            var pick = src.Category switch { "anime" => pony, "illustration" => noob, _ => rv };
+            foreach (var m in new[] { pick, rv, noob, pony }.Concat(ImageCatalog.Models.Where(m => m.Engine == "sdxl")))
+                if (Ok(m) && CanDo(m, op)) return new Choice(m, $"{m.Name} faz esta edição melhor que o {src.Name}", null);
+        }
+        if (op != "txt2img")
+        {
+            var editor = new[] { rv, noob, pony, z, f }.FirstOrDefault(m => Ok(m) && CanDo(m, op));
+            if (editor is not null && sourceModel is null) return new Choice(editor, $"Edição com {editor.Name}", null);
+        }
 
         var wantsText = Text.IsMatch(prompt);
         var anime = Anime.IsMatch(prompt);

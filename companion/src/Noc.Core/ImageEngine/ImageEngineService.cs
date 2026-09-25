@@ -202,7 +202,7 @@ public sealed class ImageEngineService : IAsyncDisposable
     /// No automático, LoRAs escolhidos e a imagem de origem (edição) pesam na escolha.
     /// </summary>
     public (ImageModelDef? Model, string? Note, string? Error) Choose(string choice, string quality, string prompt, long pixels,
-        string? loraFamily = null, string? sourceModel = null)
+        string? loraFamily = null, string? sourceModel = null, string op = "txt2img")
     {
         if (choice.StartsWith("model:", StringComparison.Ordinal))
         {
@@ -221,7 +221,7 @@ public sealed class ImageEngineService : IAsyncDisposable
                 if (Ready(f)) return pixels > f.Defaults.MaxPixels ? (null, null, "too_large") : (f, null, null);
                 return (null, null, (f.Gated ? "flux_unavailable:" : "model_not_installed:") + f.Id);
             default:
-                var r = ImageRouter.Choose(prompt, quality, pixels, Ready, loraFamily, sourceModel);
+                var r = ImageRouter.Choose(prompt, quality, pixels, Ready, loraFamily, sourceModel, op);
                 return (r.Model, r.Note, r.Error);
         }
     }
