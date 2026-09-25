@@ -90,7 +90,10 @@ class ImageJobs(
         }
     }
 
-    fun supported(): Boolean = (connection.state.value as? ConnState.Online)?.pc?.has("image") == true || connection.lastFeatures.contains("image")
+    fun supported(): Boolean = feature("image")
+
+    /** O Companion do PC anuncia o recurso (image2 = especialistas, loras, image_edit = edição/guias). Companion 1.2 não tem. */
+    fun feature(f: String): Boolean = (connection.state.value as? ConnState.Online)?.pc?.has(f) == true || connection.lastFeatures.contains(f)
 
     suspend fun refreshCaps(): ImageCaps? {
         if (!supported()) return null

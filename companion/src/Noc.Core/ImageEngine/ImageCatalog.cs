@@ -51,6 +51,10 @@ public sealed record ImageModelDef
     public string? Sha256 { get; init; }
     /// <summary>Importado pelo usuário (arquivo local; nada a baixar).</summary>
     public bool Local { get; init; }
+    /// <summary>O checkpoint traz o próprio VAE (false = usa o VAE de outro SDXL instalado).</summary>
+    public bool BakedVae { get; init; } = true;
+    /// <summary>Resolução de treino declarada (lado, px): 1024 no SDXL.</summary>
+    public int NativeResolution { get; init; } = 1024;
     public DateTimeOffset? ImportedAt { get; init; }
     /// <summary>Tamanho aproximado do download (para a interface antes de listar o repositório).</summary>
     public required long ApproxBytes { get; init; }

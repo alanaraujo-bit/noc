@@ -112,7 +112,19 @@ fun ImageEditorScreen(container: AppContainer, nav: NavHostController, creationI
         val path = cr.path ?: cr.thumbPath
         val bmp by produceState<Bitmap?>(null, path) { value = withContext(Dispatchers.IO) { path?.let { decodeSampled(it, 1600) } } }
         val model = caps?.model(cr.model)
-        val canEdit = model == null || model.can(if (mode == "expand") "outpaint" else "inpaint") || model.caps.isEmpty()
+        // o PC escolhe quem faz a edição: o próprio modelo, ou um especialista quando ele não sabe (ex.: expandir no Z-Image)
+        val op = if (mode == "expand") "outpaint" else "inpaint"
+        val doer = when {
+            model == null || model.caps.isEmpty() || model.can(op) -> model
+            else -> caps?.models?.filter { it.ready && it.can(op) }?.let { ready ->
+                val want = when (model.category) { "anime" -> "pony-v6-xl"; "illustration" -> "noobai-xl-vpred-1"; else -> "realvisxl-v5" }
+                ready.firstOrNull { it.id == want } ?: ready.firstOrNull { it.sdxl } ?: ready.firstOrNull()
+            }
+        }
+        val canEdit = model == null || model.caps.isEmpty() || doer != null
+        val via = doer?.takeIf { model != null && it.id != model.id }?.name
+        if (via != null) Text("Esta edição será feita pelo $via, que faz melhor que o ${model?.name}.", style = MaterialTheme.typography.bodySmall,
+            color = Noc.colors.text3, modifier = Modifier.padding(horizontal = 16.dp))
         if (mode == "expand") ExpandEditor(cr, bmp, prompt, { prompt = it }, busy, canEdit) { expand ->
             busy = true
             scope.launch {
@@ -194,7 +206,7 @@ private fun PaintEditor(
             }
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            if (!canEdit) Text("Este modelo não edita com pincel.", style = MaterialTheme.typography.bodySmall, color = c.err)
+            if (!canEdit) Text("Nenhum modelo pronto no PC edita com pincel ainda.", style = MaterialTheme.typography.bodySmall, color = c.err)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ToolButton(Icons.Rounded.Brush, "Pincel", !erase) { erase = false }
                 ToolButton(Icons.Rounded.CleaningServices, "Borracha", erase) { erase = true }
@@ -284,7 +296,7 @@ private fun ExpandEditor(
             }
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            if (!canEdit) Text("Este modelo não expande imagens.", style = MaterialTheme.typography.bodySmall, color = c.err)
+            if (!canEdit) Text("Nenhum modelo pronto no PC expande imagens ainda.", style = MaterialTheme.typography.bodySmall, color = c.err)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 presets.forEach { (label, _) -> Chip(label, selected = choice == label) { choice = label } }
             }

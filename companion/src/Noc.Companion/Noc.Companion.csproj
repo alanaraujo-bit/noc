@@ -10,7 +10,7 @@
     <AssemblyName>Noc</AssemblyName>
     <RootNamespace>Noc.Companion</RootNamespace>
     <ApplicationIcon>Assets\noc.ico</ApplicationIcon>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <Product>Noc Companion</Product>
     <Company>Noc</Company>
     <Description>Noc Companion — acesso seguro às suas IAs locais pelo celular</Description>

@@ -610,6 +610,10 @@ public sealed class ImageEngineService : IAsyncDisposable
                 ["config"] = Store.InstalledDir(ImageCatalog.SdxlConfig) ?? throw new JobFailure("aux_missing", "A configuração do SDXL ainda não foi instalada."),
                 ["dtype"] = "bf16",
             };
+            // checkpoint sem VAE embutido: o VAE vem de um SDXL instalado (o arquivo inteiro serve de fonte)
+            if (!def.BakedVae)
+                cmd["vae"] = new[] { ImageCatalog.RealVisXL, ImageCatalog.PonyV6, ImageCatalog.NoobAI }.Select(Store.CheckpointPath).FirstOrDefault(x => x is not null)
+                             ?? throw new JobFailure("vae_missing", $"O {def.Name} não traz VAE e nenhum SDXL instalado pode emprestar o dele.");
         }
         else
         {
@@ -638,6 +642,7 @@ public sealed class ImageEngineService : IAsyncDisposable
         State = EngineState.Ready;
         var secs = sw.Elapsed.TotalSeconds;
         Store.SetLoadSeconds(def, Math.Round(secs, 1));
+        if (r["mem"]?["allocatedMb"]?.GetValue<long>() is long alloc && alloc > 0) Store.SetMeasuredVram(def, resident: alloc / 1024.0, peak: null);
         Store.MarkUsed(def);
         Activity?.Invoke($"{def.Name} pronto para gerar (carregado em {secs:0.0} s)", "model");
         Trace?.Invoke($"{def.Id} carregado em {secs:0.0} s (transformer {mode.Transformer}, texto {mode.TextEncoder}, VRAM alocada {r["mem"]?["allocatedMb"]} MB, livre {r["mem"]?["freeMb"]} MB)");
@@ -1075,6 +1080,8 @@ public sealed class ImageEngineService : IAsyncDisposable
                 ["queuedMs"] = (long)((job.StartedAt ?? DateTimeOffset.Now) - job.CreatedAt).TotalMilliseconds,
             },
         };
+        if (stats["peakReservedMb"]?.GetValue<long>() is long pk && pk > 0 && req.Op == "txt2img" && req.ControlType is null && req.Reference is null && !req.Hd)
+            Store.SetMeasuredVram(def, resident: null, peak: pk / 1024.0);
         Metrics(new JsonObject
         {
             ["kind"] = "generate", ["model"] = def.Id, ["op"] = req.Op, ["width"] = req.Width, ["height"] = req.Height, ["steps"] = req.Steps, ["count"] = req.Count,
@@ -1342,7 +1349,12 @@ public sealed class ImageEngineService : IAsyncDisposable
         o["guidance"] = d.GuidanceAdjustable ? new JsonObject { ["min"] = d.GuidanceMin, ["max"] = d.GuidanceMax, ["default"] = d.Guidance } : null;
         o["maxPixels"] = d.MaxPixels;
         o["preset"] = ImageCatalog.PresetJson(m);
-        o["vramGiB"] = Math.Round(d.ResidentGiB + d.PeakExtraGiB, 1);
+        o["vramGiB"] = Math.Round(Store.MeasuredPeak(m) ?? d.ResidentGiB + d.PeakExtraGiB, 1);
+        o["vramMeasured"] = Store.MeasuredPeak(m) is not null;
+        o["residentGiB"] = Store.MeasuredResident(m) is { } rg ? Math.Round(rg, 1) : null;
+        o["resolution"] = m.NativeResolution;
+        o["vae"] = m.Engine != "sdxl" ? null : m.BakedVae ? "embutido" : "emprestado de outro SDXL";
+        o["prediction"] = m.Preset.Prediction;
         o["loadSeconds"] = Store.LoadSeconds(m);
         return o;
     }

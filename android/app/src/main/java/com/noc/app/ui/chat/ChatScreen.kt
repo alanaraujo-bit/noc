@@ -472,7 +472,7 @@ fun ChatScreen(
                     topSlot = if (imageMode) {
                         {
                             com.noc.app.ui.image.ImageModeBar(
-                                options = imageOptions, caps = imageCaps,
+                                options = imageOptions, caps = imageCaps, phase4 = container.chat.images.feature("image_edit"),
                                 onChange = { o -> setImageOptions(o); container.chat.images.prepare(o) },
                                 onClose = { imageMode = false },
                                 onStudio = { imageAdvanced = true },
@@ -621,7 +621,7 @@ fun ChatScreen(
                 items = list.filter { it.path != null || it.thumbPath != null }, start = index,
                 actions = com.noc.app.ui.image.ViewerActions(
                     creation = com.noc.app.ui.image.CreationActions(container, nav, scope, toast = { t -> vm.toast(t) },
-                        currentConversation = { conv?.id }, onStayed = { viewer = null }),
+                        currentConversation = { conv?.id }, onStayed = { viewer = null }).takeIf { container.chat.images.feature("image_edit") },
                     loadMeta = { id -> container.chat.images.meta(id) },
                     onRegenerate = msg?.let { m -> { _ -> vm.regenerate(m.id); Unit } },
                     onVariation = msg?.let { m -> { _ -> scope.launch { runCatching { container.chat.images.variation(m) } }; Unit } },

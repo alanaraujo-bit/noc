@@ -312,6 +312,7 @@ public class Phase4Tests(ITestOutputHelper log)
     {
         if (!Enabled) return;
         await using var p = await P4Async();
+        var since = DateTime.Now;
         var jobs = new List<string>();
         foreach (var (model, prompt) in new[] { ("pony-v6-xl", "a cat knight"), ("z-image-turbo", "a red bicycle"), ("noobai-xl-vpred-1", "1girl, reading a book"), ("realvisxl-v5", "a bowl of ramen") })
         {
@@ -349,7 +350,127 @@ public class Phase4Tests(ITestOutputHelper log)
             if (e["step"]?.GetValue<int>() == 5) await p.Client.CallAsync("chat.cancel", new JsonObject { ["job"] = mid });
         });
         Assert.Equal("cancelled", cancelled.End["reason"]!.GetValue<string>());
-        var metrics = File.ReadAllLines(Path.Combine(SharedRoot, "image-metrics.jsonl")).Select(l => JsonNode.Parse(l)!.AsObject()).ToList();
-        Assert.DoesNotContain(metrics, m => m["kind"]?.GetValue<string>() == "oom");
+        // nenhuma troca de modelo precisou de recuperação de VRAM
+        AssertNoVramRecovery(since);
+    }
+
+    /// <summary>Nenhuma recuperação de falta de VRAM desde [since] (o diário registra "falta de VRAM" quando acontece).</summary>
+    private static void AssertNoVramRecovery(DateTime since)
+    {
+        var diag = Path.Combine(SharedRoot, "diag.log");
+        if (!File.Exists(diag)) return;
+        foreach (var line in File.ReadLines(diag))
+        {
+            if (line.Length < 23 || !DateTime.TryParse(line[..23], out var at) || at < since) continue;
+            Assert.DoesNotContain("falta de VRAM", line);
+            Assert.DoesNotContain("oom", line);
+        }
+    }
+
+    private static string PathOfImage(Paired p, string id) => p.Host.Images.Outputs.BaseOf(id)! + ".png";
+
+    [Fact]
+    public async Task P5b_Brush_edit_with_opaque_phone_mask_keeps_the_rest_and_uses_the_scene_context()
+    {
+        if (!Enabled) return;
+        await using var p = await P4Async();
+        var src = File.ReadAllText(Path.Combine(SharedRoot, "p1-image.txt")); // o pescador do P1 (com metadata no PC)
+        var mask = await Blob(p, File.ReadAllBytes(Path.Combine(Fixtures, "mask_hat_rgba.png")));
+        var (_, r) = await Gen(p, new JsonObject { ["op"] = "inpaint", ["source"] = "img:" + src, ["mask"] = "blob:" + mask, ["prompt"] = "um gorro de lã vermelho", ["seed"] = 9 });
+        log.WriteLine("fim: " + Short(r.End.ToJsonString(), 700));
+        Assert.Equal("stop", r.End["reason"]!.GetValue<string>());
+        var final = r.End["prompt"]!["final"]!.GetValue<string>().ToLowerInvariant();
+        Assert.Contains("fisherman", final);             // a cena veio da imagem de origem
+        Assert.True(final.Contains("hat") || final.Contains("beanie"), final);
+        // fora da máscara (metade de baixo) a imagem é a mesma
+        using var a = new System.Drawing.Bitmap(PathOfImage(p, src));
+        using var b = new System.Drawing.Bitmap(PathOfImage(p, Img(r)["id"]!.GetValue<string>()));
+        double diff = 0; var n = 0;
+        for (var y = a.Height / 2; y < a.Height; y += 7)
+            for (var x = 0; x < a.Width; x += 7)
+            {
+                var ca = a.GetPixel(x, y); var cb = b.GetPixel(x, y);
+                diff += Math.Abs(ca.R - cb.R) + Math.Abs(ca.G - cb.G) + Math.Abs(ca.B - cb.B);
+                n++;
+            }
+        log.WriteLine($"diferença média fora da máscara: {diff / n / 3:0.00}");
+        Assert.True(diff / n / 3 < 2.0, "a edição com pincel mudou a imagem fora da área pintada");
+    }
+
+    [Fact]
+    public async Task P8_Everything_at_once_lora_pose_reference_detail_hd_with_the_llm_loaded()
+    {
+        if (!Enabled) return;
+        await using var p = await P4Async();
+        var since = DateTime.Now;
+        var fast = p.Host.Catalog.ModelForTier(Library.Tiers.Fast)!;
+        await p.Host.Models.EnsureLoadedAsync(fast, null, CancellationToken.None, Library.Tiers.Fast);
+        var person = "blob:" + await Blob(p, File.ReadAllBytes(Path.Combine(Fixtures, "person.jpg")));
+        var lora = p.Host.Images.Library.Loras.First();
+        var (_, r) = await Gen(p, new JsonObject
+        {
+            ["prompt"] = "um explorador ajoelhado numa caverna de cristais", ["model"] = "realvisxl-v5", ["format"] = "portrait", ["seed"] = 21,
+            ["loras"] = new JsonArray(new JsonObject { ["id"] = lora.Id, ["weight"] = 0.6 }),
+            ["control"] = new JsonObject { ["type"] = "pose", ["source"] = person, ["scale"] = 0.8 },
+            ["reference"] = new JsonObject { ["source"] = person, ["scale"] = 0.4 },
+            ["detail"] = new JsonArray("face", "hand"), ["hd"] = true,
+        }, TimeSpan.FromMinutes(20));
+        var stats = r.End["stats"]!.AsObject();
+        log.WriteLine("fim: " + Short(r.End.ToJsonString(), 900));
+        Assert.Equal("stop", r.End["reason"]!.GetValue<string>());
+        Assert.Equal(1664, Img(r)["width"]!.GetValue<int>());
+        foreach (var st in new[] { "analyzing", "reference", "detecting", "upscaling", "refining" })
+            Assert.Contains(r.Events, e => e["stage"]?.GetValue<string>() == st);
+        Assert.DoesNotContain(r.Events, e => e["phase"]?.GetValue<string>() == "recovering");
+        log.WriteLine($"pico de VRAM reservado: {stats["peakVramMb"]} MB, passo médio {stats["meanStepMs"]} ms");
+        Assert.True(stats["meanStepMs"]!.GetValue<int>() < 700, "passo lento demais: derramou para a RAM compartilhada?");
+        AssertNoVramRecovery(since);
+    }
+
+    /// <summary>Outro programa segurando VRAM (como um jogo aberto): o motor se adapta ou explica — nunca derrama nem trava.</summary>
+    [Fact]
+    public async Task P9_Low_vram_runs_lean_or_refuses_clearly_never_spills()
+    {
+        if (!Enabled) return;
+        await using var p = await P4Async();
+        async Task<System.Diagnostics.Process> Hog(double gib)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(ImageRuntime.PythonExe) { RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+            psi.ArgumentList.Add(Path.Combine(Fixtures, "vram_hog.py"));
+            psi.ArgumentList.Add(gib.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var proc = System.Diagnostics.Process.Start(psi)!;
+            Assert.Equal("ok", (await proc.StandardOutput.ReadLineAsync())?.Trim());
+            await Task.Delay(1500);
+            return proc;
+        }
+        // motor frio: o ocupador chega antes
+        await p.Host.Images.ReleaseForLlmAsync(CancellationToken.None);
+        using (var hog = await Hog(9))
+        {
+            try
+            {
+                var (_, r) = await Gen(p, new JsonObject { ["prompt"] = "a red bicycle leaning on a wall", ["model"] = "pony-v6-xl", ["quality"] = "fast", ["seed"] = 2 });
+                log.WriteLine("com 9 GiB ocupados: " + Short(r.End.ToJsonString(), 500));
+                Assert.Equal("stop", r.End["reason"]!.GetValue<string>());
+                Assert.True(r.End["stats"]!["meanStepMs"]!.GetValue<int>() < 400, "derramou para a RAM compartilhada");
+            }
+            finally { hog.StandardInput.Close(); hog.Kill(); }
+        }
+        await Task.Delay(3000);
+        // libera o motor aquecido pelo pedido anterior para o ocupador grande caber
+        await WaitAsync(() => p.Host.Images.Busy == false, TimeSpan.FromMinutes(1), "motor livre");
+        await p.Host.Images.ReleaseForLlmAsync(CancellationToken.None);
+        using (var hog = await Hog(15))
+        {
+            try
+            {
+                var (_, r) = await Gen(p, new JsonObject { ["prompt"] = "a red bicycle", ["model"] = "pony-v6-xl", ["quality"] = "fast", ["seed"] = 2 });
+                log.WriteLine("com 15 GiB ocupados: " + r.End.ToJsonString());
+                Assert.Equal("error", r.End["reason"]!.GetValue<string>());
+                Assert.Equal("vram_insufficient", r.End["error"]!.GetValue<string>());
+                Assert.Contains("Feche jogos", r.End["detail"]!.GetValue<string>());
+            }
+            finally { hog.StandardInput.Close(); hog.Kill(); }
+        }
     }
 }

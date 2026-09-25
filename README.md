@@ -19,18 +19,18 @@ Baixe na página de [**Releases**](https://github.com/alanaraujo-bit/noc/release
 
 | Arquivo | Para quê |
 |---|---|
-| `Noc-Companion-Setup-1.1.0.exe` | Instalador do Companion para Windows 10/11 (64 bits). Não precisa do .NET instalado. |
-| `Noc-1.1.0.apk` | App Android 8.0+ (instale direto no celular; atualiza o 1.0 sem perder conversas). |
+| `Noc-Companion-Setup-1.3.0.exe` | Instalador do Companion para Windows 10/11 (64 bits). Não precisa do .NET instalado. |
+| `Noc-1.3.0.apk` | App Android 8.0+ (instale direto no celular; atualiza as versões anteriores sem perder conversas nem criações). |
 
 ## Como começar (5 minutos)
 
 **No PC**
 1. Instale o [LM Studio](https://lmstudio.ai) e baixe um modelo de conversa (ex.: Qwen, Llama, Gemma).
-2. Rode o `Noc-Companion-Setup-1.1.0.exe`. Na pergunta de instalação, prefira "para todos os usuários", porque isso cria a regra de firewall para a conexão direta na Wi-Fi.
+2. Rode o `Noc-Companion-Setup-1.3.0.exe`. Na pergunta de instalação, prefira "para todos os usuários", porque isso cria a regra de firewall para a conexão direta na Wi-Fi.
 3. O Companion abre sozinho, encontra o LM Studio e liga o servidor dele se precisar. Ele também inicia junto com o Windows.
 
 **No Android**
-1. Baixe o `Noc-1.1.0.apk` no celular e abra o arquivo. O Android vai pedir para permitir "instalar apps desta fonte"; permita para o navegador ou gerenciador de arquivos que você usou.
+1. Baixe o `Noc-1.3.0.apk` no celular e abra o arquivo. O Android vai pedir para permitir "instalar apps desta fonte"; permita para o navegador ou gerenciador de arquivos que você usou.
 2. Abra o Noc e siga a apresentação.
 3. No PC, clique em **Parear celular** e aponte a câmera para o QR Code. Sem câmera, use a aba **Código**: digite o código no celular e confirme no PC o número de verificação.
 4. O app testa a conexão e mostra a primeira resposta do seu modelo. Pronto.
@@ -55,6 +55,29 @@ Depois do primeiro pareamento não há mais nada para configurar. Deixe o PC lig
 - **Notificações**: aviso quando a resposta fica pronta (com trecho, modelo e tempo), que abre direto na mensagem; uma única notificação de progresso enquanto o PC trabalha, com **Parar** de verdade; **Copiar** e **Tentar de novo** na própria notificação. Nada de aviso quando você já está olhando a conversa. Na tela bloqueada você escolhe: conteúdo completo, só "Sua resposta está pronta" ou nada.
 - **Atividade e status**: fila de tarefas com posição, prioridade e cancelamento; tela de status com PC, GPU, VRAM, modelo, contexto, tok/s, conexão, LM Studio e Companion.
 - **Diagnóstico**: explica em português o que está errado (PC offline, LM Studio parado, sem modelo, rede, perfis, visão, voz, notificações) e o que fazer.
+
+## Criar e editar imagens (na GPU do PC)
+
+Toque em **+ → Criar imagem** e descreva em português. A imagem é feita na placa de vídeo do seu PC e chega no celular.
+
+| Motor | Para quê |
+|---|---|
+| ✦ **Automático** | Escolhe o melhor para cada pedido e explica por quê (fotos, anime, personagens, texto na imagem…). |
+| ⚡ **Rápido** — Z-Image Turbo | Fotos e texto dentro da imagem, ~9 s. |
+| ◆ **Qualidade** — FLUX.1 Dev | Composição e detalhe máximos (precisa da sua conta do Hugging Face). |
+| ◈ **RealVisXL V5.0** | Fotografia e realismo. |
+| ◈ **NoobAI XL** | Personagens e ilustração. |
+| ◈ **Pony Diffusion V6 XL** | Anime e estilos. |
+
+- **Você escreve normal**: cada modelo recebe o prompt do jeito que entende — inglês descritivo, tags Danbooru (NoobAI) ou score tags (Pony). O pedido original e o prompt usado ficam guardados em **Detalhes**. No **Estúdio**, o modo **RAW** manda o texto exatamente como você escreveu.
+- **LoRAs sem sintaxe**: importe por link do Civitai/Hugging Face (ou salve o `.safetensors` na pasta Downloads do PC), ligue e ajuste a força no celular. As palavras de ativação entram sozinhas. O PC confere o hash, descobre a família (SDXL, Pony, NoobAI/Illustrious) e avisa quando um LoRA não combina com o modelo.
+- **Guias**: imagem de referência (estilo/clima), copiar a pose de uma foto, copiar a estrutura (profundidade) ou seguir contornos.
+- **Editar uma imagem pronta**: pincel (pinte a área e diga o que colocar), expandir para os lados, variações, rostos e mãos refeitos, ampliar 2x/4x e **Alta Definição**.
+- **Estúdio**: tamanho, passos, CFG/guidance, sampler, scheduler, clip skip, seed, prompt negativo — os padrões já vêm medidos para a sua GPU.
+- **Recriar**: cada imagem guarda modelo (versão e hash), LoRAs, seed, sampler, passos e prompts; "Recriar" repete a mesma imagem, bit a bit.
+- **Criações**: galeria com busca, favoritas, edições e filtros por modelo, LoRA e conversa.
+- **Novos checkpoints**: importe um checkpoint SDXL (`.safetensors`) por link ou pela pasta Downloads: ele aparece nos Especialistas com o preset da família certa.
+- Tudo roda em segundo plano no PC, com fila, cancelamento e notificações — pode fechar o app. A memória da GPU é gerenciada sozinha (o modelo de conversa sai e volta quando precisa).
 
 ## Segurança e privacidade
 

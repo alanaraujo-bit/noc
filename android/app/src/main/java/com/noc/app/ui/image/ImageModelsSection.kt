@@ -81,8 +81,8 @@ fun ImageModelsSection(container: AppContainer, onLoras: () -> Unit = {}) {
                 }
             }
         }
-        Spacer(Modifier.height(10.dp))
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.surface)) {
+        if (container.chat.images.feature("loras")) Spacer(Modifier.height(10.dp))
+        if (container.chat.images.feature("loras")) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.surface)) {
             com.noc.app.ui.components.RowItem("LoRAs", "${caps?.loraCount ?: 0} na biblioteca do PC", icon = androidx.compose.material.icons.Icons.Rounded.Layers, onClick = onLoras)
             Box(Modifier.padding(start = 56.dp).fillMaxWidth().height(1.dp).background(c.line))
             com.noc.app.ui.components.RowItem("Importar modelo ou LoRA", "Link do Civitai ou do Hugging Face", icon = androidx.compose.material.icons.Icons.Rounded.Link,

@@ -39,7 +39,13 @@ public sealed record SafetensorsInfo(IReadOnlyCollection<string> Keys, IReadOnly
 }
 
 /// <summary>Resultado da detecção de um arquivo: checkpoint ou LoRA, arquitetura, família e parâmetros.</summary>
-public sealed record Detection(string Kind, string Arch, string Family, string Prediction, string? BaseModel, string? Title, List<string> Triggers, string? Note);
+public sealed record Detection(string Kind, string Arch, string Family, string Prediction, string? BaseModel, string? Title, List<string> Triggers, string? Note)
+{
+    /// <summary>Checkpoint com VAE embutido (chaves first_stage_model.*).</summary>
+    public bool BakedVae { get; init; } = true;
+    /// <summary>Resolução de treino (modelspec.resolution "1024x1024"), 1024 se não declarada.</summary>
+    public int Resolution { get; init; } = 1024;
+}
 
 public static class ModelDetector
 {
@@ -89,7 +95,11 @@ public static class ModelDetector
         };
         if (family == "sdxl" && prediction == "v_prediction") family = "noobai";
         var triggers = TriggersFrom(h);
-        return new Detection(kind, arch, family, prediction, baseModel, title, triggers, null);
+        var res = h.M("modelspec.resolution") is { } r && int.TryParse(r.Split('x')[0], out var side) && side is >= 512 and <= 2048 ? side : 1024;
+        return new Detection(kind, arch, family, prediction, baseModel, title, triggers, null)
+        {
+            BakedVae = kind != "checkpoint" || Any("first_stage_model."), Resolution = res,
+        };
     }
 
     private static bool SdxlByMeta(SafetensorsInfo h) =>
@@ -327,6 +337,7 @@ public sealed class ImageLibrary : IDisposable
             Revision = sha[..12], License = info?["license"]?.GetValue<string>() ?? "Verifique a licença na página do modelo",
             LicenseUrl = info?["source"]?.GetValue<string>() ?? "", Checkpoint = dst, Sha256 = sha, Local = true, ImportedAt = DateTimeOffset.Now,
             ApproxBytes = size, Requires = [ImageCatalog.SdxlConfigId], Defaults = defaults, Preset = preset,
+            BakedVae = det.BakedVae, NativeResolution = det.Resolution,
             Caps = new ModelCaps { Img2Img = true, Inpaint = true, Outpaint = true, Loras = true, ControlNet = true, Reference = true, Negative = true },
         };
         ImageCatalog.AddCustom(def);

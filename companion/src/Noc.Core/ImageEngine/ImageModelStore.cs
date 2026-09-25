@@ -27,6 +27,9 @@ public sealed class InstalledModel
     public DateTimeOffset? VerifiedAt { get; set; }
     /// <summary>Última carga medida (segundos), para a estimativa "Preparando… ~12 s".</summary>
     public double? LoadSeconds { get; set; }
+    /// <summary>VRAM medida nesta GPU (GiB): com o modelo carregado e no pico de uma geração simples.</summary>
+    public double? ResidentGiB { get; set; }
+    public double? PeakGiB { get; set; }
     public string? LatestRevision { get; set; }
     public DateTimeOffset? CheckedAt { get; set; }
     public Dictionary<string, FileRecord> Files { get; set; } = new();
@@ -191,6 +194,17 @@ public sealed class ImageModelStore : IDisposable
         SaveState();
         return true;
     }
+
+    public void SetMeasuredVram(ImageModelDef m, double? resident, double? peak)
+    {
+        var r = Rec(m);
+        if (resident is { } rs) r.ResidentGiB = Math.Round(rs, 2);
+        if (peak is { } pk) r.PeakGiB = Math.Round(Math.Max(pk, r.ResidentGiB ?? 0), 2);
+        SaveState();
+    }
+
+    public double? MeasuredPeak(ImageModelDef m) => Rec(m).PeakGiB;
+    public double? MeasuredResident(ImageModelDef m) => Rec(m).ResidentGiB;
 
     public void SetLoadSeconds(ImageModelDef m, double seconds)
     {

@@ -110,6 +110,8 @@ fun engineModelName(o: ImageOptions, caps: ImageCaps?): String? =
 fun ImageModeBar(
     options: ImageOptions,
     caps: ImageCaps?,
+    /** Recursos da fase 4 que o PC anuncia (LoRAs, guias). */
+    phase4: Boolean = true,
     onChange: (ImageOptions) -> Unit,
     onClose: () -> Unit,
     onStudio: () -> Unit,
@@ -120,8 +122,8 @@ fun ImageModeBar(
     val c = Noc.colors
     val formats = caps?.formats?.takeIf { it.isNotEmpty() } ?: defaultFormats
     val model = caps?.modelFor(options)
-    val lorasOk = options.engine == "auto" && options.model == null || model?.can("loras") == true
-    val guidesOk = options.engine == "auto" && options.model == null || model?.can("controlnet") == true
+    val lorasOk = phase4 && (options.engine == "auto" && options.model == null || model?.can("loras") == true)
+    val guidesOk = phase4 && (options.engine == "auto" && options.model == null || model?.can("controlnet") == true)
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp)) {
             Icon(Icons.Rounded.AutoAwesome, null, tint = c.accent, modifier = Modifier.size(16.dp))

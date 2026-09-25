@@ -146,7 +146,7 @@ fun CreationsScreen(container: AppContainer, nav: NavHostController) {
         ImageViewer(
             items = shown, start = start,
             actions = ViewerActions(
-                creation = actions,
+                creation = actions.takeIf { container.chat.images.feature("image_edit") },
                 loadMeta = { id -> container.chat.images.meta(id) },
                 onReusePrompt = { cr -> nav.navigate(Routes.chat(cr.conversationId ?: Routes.NEW, draft = cr.prompt, image = true)) },
                 onVariation = { cr -> scope.launch { runCatching { container.db.messages().get(cr.messageId ?: "")?.let { container.chat.images.variation(it) } } } ; cr.conversationId?.let { nav.navigate(Routes.chat(it)) } },
