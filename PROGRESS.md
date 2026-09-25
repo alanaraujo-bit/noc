@@ -61,3 +61,21 @@
   Relay republicado → Companion e celular reconectam sozinhos.
 - Bug corrigido: fechamento 4404 do relay chegava como "send failed" 1006 (agora espera o CloseInfo real).
 - Relay: railway.json (1 réplica, us-east4, healthcheck). README em relay/.
+
+## Pendências (ordem de ataque) — atualizado 2026-09-25 01:45
+- [x] Bug troca de PC (activePc com flatMapLatest + sessionPcId)
+- [x] Jobs terminados retidos 24 h em disco (DPAPI) — teste E2E "sobrevive ao reinício"
+- [x] Release APK com R8 + keystore aleatório (android/keystore.properties, gitignored)
+- [x] Chat no release: corte por tokens + Continuar, parar + Continuar, editar (ramo 2/2), regenerar, excluir, selecionar texto
+- [x] Busca sem acento; LaTeX → Unicode (fórmulas)
+- [ ] Histórico: fixar, pasta, duplicar, exportar, arquivar (swipe) + desfazer, renomear
+- [ ] Bibliotecas: criar perfil, criar prompt, padrão, fluxo "Escolher da biblioteca"
+- [ ] Anexo de texto; imagem desabilitada p/ Qwen; caminho de visão (modelo com visão?)
+- [ ] Modelos pelo celular: carregar/descarregar/recarregar contexto
+- [ ] Revogar no PC → celular "desvinculado"; telas Dispositivos/Segurança/Diagnóstico no celular
+- [ ] Modo escuro nos dois apps
+- [ ] Processo morto no meio (am force-stop) → resumePending; Doze
+- [ ] Conversa enorme (seed debug) + reduzir recarga do Room durante o stream
+- [ ] Trocar entre 2 PCs (DevHost como 2º PC)
+- [ ] Firewall (regra no instalador + aviso de rede Pública); publish self-contained; instalador Inno Setup; teste install/uninstall
+- [ ] README, BLOCKERS (SmartScreen/Play Protect, backup do keystore, celular físico)
