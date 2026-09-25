@@ -153,17 +153,45 @@ fun ChatScreen(
     val imageOptions = imageOverride ?: savedImageOptions
     val imageCaps by container.chat.images.caps.collectAsState()
     var imageAdvanced by remember { mutableStateOf(false) }
+    /** Folha aberta do modo imagem: engine | loras | guide | creations */
+    var imageSheet by remember { mutableStateOf<String?>(null) }
+    var pendingGuide by remember { mutableStateOf<com.noc.app.ui.image.Guide?>(null) }
+    // pedido vindo da galeria ("Usar como referência", "Reutilizar prompt")
+    LaunchedEffect(Unit) {
+        container.chat.images.pending.value?.let { (o, text) ->
+            container.chat.images.pending.value = null
+            imageOverride = o
+            imageMode = true
+            if (!text.isNullOrBlank()) draft = TextFieldValue(text, TextRange(text.length))
+        }
+    }
     var viewer by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var pendingSave by remember { mutableStateOf<java.io.File?>(null) }
     LaunchedEffect(imageMode) {
         if (imageMode) {
             container.chat.images.refreshCaps()
-            container.chat.images.prepare(imageOptions.engine)
+            container.chat.images.prepare(imageOptions)
         }
     }
     fun setImageOptions(o: com.noc.app.chat.ImageOptions) {
         imageOverride = o
-        vm.saveImageOptions(o)
+        // guias apontam para fotos desta conversa: valem para a sessão, não ficam guardados como padrão
+        vm.saveImageOptions(o.copy(reference = null, referenceScale = null, control = null, controlInput = null, controlScale = null))
+    }
+    fun applyGuide(g: com.noc.app.ui.image.Guide, input: com.noc.app.chat.ImageInput) {
+        val o = imageOptions
+        setImageOptions(
+            if (g.control == null) o.copy(reference = input)
+            else o.copy(control = g.control, controlInput = input, controlScale = null),
+        )
+    }
+    val guidePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val g = pendingGuide
+        pendingGuide = null
+        if (uri != null && g != null) scope.launch {
+            val input = container.chat.images.inputFromUri(uri)
+            if (input == null) vm.toast("Não foi possível abrir esta imagem.") else applyGuide(g, input)
+        }
     }
     val storagePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val f = pendingSave
@@ -362,8 +390,8 @@ fun ChatScreen(
         topBar = {
             ChatTopBar(
                 title = conv?.title ?: "Nova conversa",
-                model = if (imageMode) "✦ Criar imagem · " + (imageCaps?.engine(if (imageOptions.engine == "auto") "fast" else imageOptions.engine)?.name
-                    ?: com.noc.app.chat.ImageOptions.engineLabel(imageOptions.engine).substringAfter(' ')) else headerLabel,
+                model = if (imageMode) "✦ Criar imagem · " + (if (imageOptions.model == null && imageOptions.engine == "auto") "Automático"
+                    else com.noc.app.ui.image.engineModelName(imageOptions, imageCaps) ?: com.noc.app.chat.ImageOptions.engineLabel(imageOptions.engine).substringAfter(' ')) else headerLabel,
                 pinned = conv?.pinned == true,
                 conn = conn,
                 otherTasks = otherTasks,
@@ -439,15 +467,18 @@ fun ChatScreen(
                         context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
                     },
                     capabilityNote = if (imageMode) imageNote(imageCaps, imageOptions, container.chat.images.supported()) { nav.navigate(Routes.MODELS) } else capabilityNote,
-                    blockSend = if (imageMode) imageCaps?.engine(if (imageOptions.engine == "auto") "fast" else imageOptions.engine)?.installed == false &&
-                        imageCaps?.anyInstalled == false else capabilityNote != null,
+                    blockSend = if (imageMode) imageCaps?.let { cp -> val m = cp.modelFor(imageOptions); (m != null && !m.ready) || !cp.anyInstalled } == true
+                        else capabilityNote != null,
                     topSlot = if (imageMode) {
                         {
                             com.noc.app.ui.image.ImageModeBar(
                                 options = imageOptions, caps = imageCaps,
-                                onChange = { o -> setImageOptions(o); container.chat.images.prepare(o.engine) },
+                                onChange = { o -> setImageOptions(o); container.chat.images.prepare(o) },
                                 onClose = { imageMode = false },
-                                onAdvanced = { imageAdvanced = true },
+                                onStudio = { imageAdvanced = true },
+                                onEngine = { imageSheet = "engine" },
+                                onLoras = { imageSheet = "loras" },
+                                onGuide = { imageSheet = "guide" },
                             )
                         }
                     } else null,
@@ -565,7 +596,22 @@ fun ChatScreen(
 
     // ------------------------------------------------------------------ imagens: avançado e visualizador
     if (imageAdvanced) {
-        com.noc.app.ui.image.ImageAdvancedSheet(imageOptions, imageCaps, onApply = { setImageOptions(it) }, onDismiss = { imageAdvanced = false })
+        com.noc.app.ui.image.ImageStudioSheet(imageOptions, imageCaps, onApply = { setImageOptions(it) }, onDismiss = { imageAdvanced = false })
+    }
+    when (imageSheet) {
+        "engine" -> com.noc.app.ui.image.EngineSheet(imageOptions, imageCaps, onPick = { o -> setImageOptions(o); container.chat.images.prepare(o) },
+            onManage = { nav.navigate(Routes.MODELS) }, onDismiss = { imageSheet = null })
+        "loras" -> com.noc.app.ui.image.LoraPickerSheet(imageOptions, imageCaps, load = { container.chat.images.loras(imageCaps?.modelFor(imageOptions)?.id) },
+            onChange = { setImageOptions(it) }, onLibrary = { nav.navigate(Routes.LORAS) }, onDismiss = { imageSheet = null })
+        "guide" -> com.noc.app.ui.image.GuideSheet(imageOptions, imageCaps, onPick = { g, fromCreations ->
+            pendingGuide = g
+            if (fromCreations) imageSheet = "creations"
+            else { imageSheet = null; guidePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+        }, onDismiss = { if (imageSheet == "guide") imageSheet = null })
+        "creations" -> com.noc.app.ui.image.CreationPickerSheet(container.db, "Escolher criação", onPick = { cr ->
+            pendingGuide?.let { g -> applyGuide(g, com.noc.app.chat.ImageInput.pc(cr.id, cr.width, cr.height, cr.thumbPath)) }
+            pendingGuide = null
+        }, onDismiss = { imageSheet = null })
     }
     viewer?.let { (messageId, index) ->
         val items by container.db.creations().observeByMessage(messageId).collectAsState(initial = null)
@@ -873,17 +919,17 @@ private fun imageNote(
     if (!supported) return "O Noc Companion deste PC ainda não cria imagens. Atualize o Companion." to null
     caps ?: return null
     if (!caps.enabled) return "A geração de imagens está desligada no Companion do PC." to null
-    val e = caps.engine(if (o.engine == "auto") "fast" else o.engine) ?: return null
-    if (e.installed) return null
-    if (o.engine == "auto" && caps.anyInstalled) return null
-    val m = caps.models.firstOrNull { it.id == e.model }
+    if (o.model == null && o.engine == "auto") return if (caps.anyInstalled) null else "Nenhum modelo de imagem pronto no PC ainda." to ("Ver" to onOpen)
+    val m = caps.modelFor(o) ?: return null
+    if (m.ready) return null
     val text = when {
-        m?.state == "downloading" || m?.state == "verifying" || m?.state == "checking" -> {
+        m.state == "downloading" || m.state == "verifying" || m.state == "checking" -> {
             val pct = if (m.total != null && m.total > 0 && m.done != null) " · ${(m.done * 100 / m.total)}%" else ""
-            "O ${e.name} está sendo instalado no seu PC$pct."
+            "O ${m.name} está sendo instalado no seu PC$pct."
         }
-        m?.gated == true -> "O ${e.name} precisa de autorização no Hugging Face (veja no Companion do PC)."
-        else -> "O ${e.name} ainda não está instalado no PC."
+        caps.installQueue.contains(m.id) -> "O ${m.name} está na fila de instalação do PC."
+        m.gated -> "O ${m.name} precisa de autorização no Hugging Face (veja no Companion do PC)."
+        else -> "O ${m.name} ainda não está instalado no PC."
     }
     return text to ("Ver" to onOpen)
 }

@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [PcEntity::class, ConversationEntity::class, MessageEntity::class, PresetEntity::class, PromptEntity::class, CreationEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class NocDatabase : RoomDatabase() {
@@ -24,13 +24,21 @@ abstract class NocDatabase : RoomDatabase() {
         fun build(context: Context): NocDatabase =
             Room.databaseBuilder(context, NocDatabase::class.java, "noc.db")
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
 
         /** v2: nome amigável do modelo em cada resposta. */
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE messages ADD COLUMN modelName TEXT")
+            }
+        }
+
+        /** v4: fase 4 — operação, LoRAs, negativo, sampler, estratégia do prompt e imagem de origem em cada criação. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (col in listOf("op", "loras", "negative", "sampler", "strategy", "parentId"))
+                    db.execSQL("ALTER TABLE creations ADD COLUMN `$col` TEXT")
             }
         }
 

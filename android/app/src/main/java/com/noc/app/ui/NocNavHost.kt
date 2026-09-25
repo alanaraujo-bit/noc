@@ -50,6 +50,9 @@ object Routes {
     const val HOME = "home"
     const val CHAT = "chat/{id}?draft={draft}&preset={preset}&msg={msg}&img={img}"
     const val CREATIONS = "creations"
+    const val LORAS = "loras"
+    const val IMAGE_EDIT = "image-edit/{id}?mode={mode}"
+    fun imageEdit(id: String, mode: String) = "image-edit/$id?mode=$mode"
     const val HISTORY = "history"
     const val MODELS = "models"
     const val PRESETS = "presets"
@@ -183,6 +186,11 @@ fun NocNavHost(container: AppContainer, prefs: AppPrefs, incoming: MutableStateF
             )
         }
         composable(Routes.CREATIONS) { com.noc.app.ui.image.CreationsScreen(container, nav) }
+        composable(Routes.LORAS) { com.noc.app.ui.image.LoraLibraryScreen(container, nav) }
+        composable(
+            Routes.IMAGE_EDIT,
+            arguments = listOf(navArgument("id") { type = NavType.StringType }, navArgument("mode") { type = NavType.StringType; defaultValue = "paint" }),
+        ) { e -> com.noc.app.ui.image.ImageEditorScreen(container, nav, e.arguments?.getString("id") ?: "", e.arguments?.getString("mode") ?: "paint") }
         composable(Routes.HISTORY) { HistoryScreen(container, nav) }
         composable(Routes.MODELS) { ModelsScreen(container, onBack = { nav.popBackStack() }) }
         composable(Routes.ACTIVITY) { com.noc.app.ui.activity.ActivityScreen(container, nav) }

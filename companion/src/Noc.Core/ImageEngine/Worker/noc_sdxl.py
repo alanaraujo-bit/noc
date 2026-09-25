@@ -517,4 +517,11 @@ class SdxlEngine:
         if reference is not None:
             kw["ip_adapter_image"] = reference["image"]
             self.pipe.set_ip_adapter_scale(reference.get("scale", 0.6))
+        # nem todo pipeline aceita tudo (ex.: o de ControlNet Union não tem guidance_rescale): o que não cabe fica de fora
+        accepted = set(inspect.signature(pipe.__call__).parameters)
+        dropped = [k for k in kw if k not in accepted]
+        for k in dropped:
+            kw.pop(k)
+        if dropped:
+            log(f"{type(pipe).__name__} ignora: {', '.join(dropped)}")
         return pipe(**kw).images[0]

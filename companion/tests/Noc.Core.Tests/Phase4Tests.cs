@@ -321,13 +321,25 @@ public class Phase4Tests(ITestOutputHelper log)
         }
         // a terceira é cancelada enquanto espera na fila
         await p.Client.CallAsync("chat.cancel", new JsonObject { ["job"] = jobs[2] });
-        var reasons = new List<string>();
-        foreach (var j in jobs)
+        // um canal só para todas: cada evento vai para a sua tarefa (sem perder os das que ainda estão na fila)
+        var ends = new Dictionary<string, JsonObject>();
+        var lastSeq = jobs.ToDictionary(j => j, _ => 0);
+        var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(20);
+        while (ends.Count < jobs.Count)
         {
-            var r = await Collect(p.Client, j, TimeSpan.FromMinutes(15));
-            reasons.Add(r.End["reason"]!.GetValue<string>());
-            log.WriteLine($"{j[..8]}: {r.End["reason"]} {r.End["name"]} {r.End["stats"]?["wallMs"]} ms");
+            var evt = await p.Client.Events.Reader.ReadAsync().AsTask().WaitAsync(deadline - DateTime.UtcNow);
+            if (evt["e"]!.GetValue<string>() != "job") continue;
+            var d = evt["d"]!.AsObject();
+            var j = d["job"]!.GetValue<string>();
+            if (!lastSeq.ContainsKey(j) || d["transient"] is not null) continue;
+            var seq = d["seq"]!.GetValue<int>();
+            if (seq <= lastSeq[j]) continue;
+            Assert.True(seq == lastSeq[j] + 1 || seq > lastSeq[j] + 10_000, $"{j[..8]}: seq {seq} depois de {lastSeq[j]}");
+            lastSeq[j] = seq;
+            if (d["end"] is JsonObject end) ends[j] = end;
         }
+        var reasons = jobs.Select(j => ends[j]["reason"]!.GetValue<string>()).ToList();
+        foreach (var j in jobs) log.WriteLine($"{j[..8]}: {ends[j]["reason"]} {ends[j]["name"]} {ends[j]["stats"]?["wallMs"]} ms");
         Assert.Equal(new[] { "stop", "stop", "cancelled", "stop" }, reasons);
         // cancelar no meio da geração solta a GPU e a próxima segue
         var mid = Guid.NewGuid().ToString();

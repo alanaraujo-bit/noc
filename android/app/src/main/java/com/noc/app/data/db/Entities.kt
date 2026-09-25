@@ -107,6 +107,17 @@ data class CreationEntity(
     val path: String? = null,
     val thumbPath: String? = null,
     val favorite: Boolean = false,
+    // v4 (fase 4): filtros da galeria e "de onde veio"
+    /** txt2img | img2img | inpaint | outpaint | upscale | detail | hd */
+    val op: String? = null,
+    /** Nomes dos LoRAs usados, separados por " | ". */
+    val loras: String? = null,
+    val negative: String? = null,
+    val sampler: String? = null,
+    /** natural | tags | pony | raw | recreate */
+    val strategy: String? = null,
+    /** Imagem de origem (edição, variação, recriação). */
+    val parentId: String? = null,
 )
 
 @Entity(tableName = "presets")

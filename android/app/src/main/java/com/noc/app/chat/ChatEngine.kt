@@ -86,8 +86,14 @@ data class LiveReply(
     val imagesReady: Int = 0,
     /** Progresso de uma etapa longa (otimização na primeira vez). */
     val stageProgress: Double? = null,
-    /** translate | enhance */
+    /** translate | enhance | tags | pony */
     val promptMode: String? = null,
+    /** Subetapa da fase 4: analyzing | reference | detecting | detailing | upscaling | refining (+ parte n de m). */
+    val subStage: String? = null,
+    val part: Int? = null,
+    val parts: Int? = null,
+    /** Operação do pedido (txt2img, inpaint, hd...). */
+    val op: String? = null,
 ) {
     enum class Phase { SENDING, UPLOADING, QUEUED, LOADING, PREPARING, THINKING, GENERATING, RECOVERING, WAITING_LM,
         PREPARING_ENGINE, OPTIMIZING, FREEING, PROMPT, SAVING, DOWNLOADING }
@@ -126,10 +132,24 @@ data class LiveReply(
         Phase.OPTIMIZING -> "Otimizando o modelo para a sua GPU" + (stageProgress?.let { " · ${(it * 100).toInt()}%" } ?: "…")
         Phase.FREEING -> "Liberando a GPU…"
         Phase.LOADING -> "Preparando gerador…"
-        Phase.PROMPT -> if (promptMode == "enhance") "Melhorando a descrição…" else "Entendendo o pedido…"
+        Phase.PROMPT -> when (promptMode) { "enhance" -> "Melhorando a descrição…"; "tags", "pony" -> "Adaptando o pedido para o modelo…"; else -> "Entendendo o pedido…" }
         Phase.GENERATING -> {
             val pct = imageProgress?.let { " · ${(it * 100).toInt()}%" } ?: "…"
-            if (imageCount > 1) "Criando imagem ${(imageIndex + 1).coerceAtMost(imageCount)} de $imageCount$pct" else "Criando sua imagem$pct"
+            val of = if (part != null && parts != null && parts > 1) " · $part de $parts" else ""
+            when (subStage) {
+                "analyzing" -> "Analisando a imagem guia…"
+                "reference" -> "Lendo a imagem de referência…"
+                "detecting" -> "Procurando rostos e mãos…"
+                "detailing" -> "Refazendo rostos e mãos$of"
+                "upscaling" -> "Ampliando a imagem…"
+                "refining" -> "Refinando em alta definição$of"
+                else -> when (op) {
+                    "inpaint" -> "Editando a área pintada$pct"
+                    "outpaint" -> "Expandindo a imagem$pct"
+                    "img2img" -> if (imageCount > 1) "Criando variação ${(imageIndex + 1).coerceAtMost(imageCount)} de $imageCount$pct" else "Criando a variação$pct"
+                    else -> if (imageCount > 1) "Criando imagem ${(imageIndex + 1).coerceAtMost(imageCount)} de $imageCount$pct" else "Criando sua imagem$pct"
+                }
+            }
         }
         Phase.SAVING -> "Finalizando…"
         Phase.DOWNLOADING -> "Recebendo a imagem…"
@@ -560,7 +580,7 @@ class ChatEngine(
     }.getOrNull()
 
     /** Envia ao PC as imagens que ele ainda não tem, em pedaços, informando o progresso real. */
-    private suspend fun uploadBlobs(session: NocSession, blobs: List<BlobRef>, onProgress: (Float, Long) -> Unit) {
+    internal suspend fun uploadBlobs(session: NocSession, blobs: List<BlobRef>, onProgress: (Float, Long) -> Unit) {
         if (blobs.isEmpty()) return
         val has = session.call("blob.has", buildJsonObject { put("hashes", buildJsonArray { blobs.forEach { add(kotlinx.serialization.json.JsonPrimitive(it.sha256)) } }) })
         val missing = has.arr("missing")?.mapNotNull { runCatching { (it as kotlinx.serialization.json.JsonPrimitive).content }.getOrNull() }?.toSet() ?: emptySet()

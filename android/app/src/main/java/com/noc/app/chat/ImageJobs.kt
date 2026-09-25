@@ -92,9 +92,35 @@ class ImageJobs(
     }
 
     /** O usuário abriu "Criar imagem": o PC já liga o gerador (sem tirar o modelo de conversa da GPU). */
-    fun prepare(engineChoice: String) = scope.launch {
-        runCatching { connection.call("image.prepare", buildJsonObject { put("engine", engineChoice) }, waitMs = 2_000) }
+    fun prepare(options: ImageOptions) = scope.launch {
+        runCatching {
+            connection.call("image.prepare", buildJsonObject { put("engine", options.engine); options.model?.let { put("model", it) } }, waitMs = 2_000)
+        }
     }
+
+    // ------------------------------------------------------------------ biblioteca de LoRAs e importação
+
+    suspend fun loras(model: String? = null): List<LoraInfo> {
+        val r = connection.call("lora.list", buildJsonObject { model?.let { put("model", it) } }, waitMs = 6_000)
+        _caps.update { it?.copy(imports = ImageCaps.parseImports(r.arr("imports"))) }
+        return r.arr("loras")?.mapNotNull { it.asObj() }?.map { LoraInfo.parse(it) } ?: emptyList()
+    }
+
+    suspend fun updateLora(id: String, change: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): LoraInfo =
+        LoraInfo.parse(connection.call("lora.update", buildJsonObject { put("id", id); change() }, waitMs = 6_000))
+
+    suspend fun deleteLora(id: String) = connection.call("lora.delete", buildJsonObject { put("id", id) }, waitMs = 6_000)
+
+    /** Link do Civitai / Hugging Face: o PC baixa, confere e organiza (LoRA ou checkpoint). */
+    suspend fun importLink(url: String): String =
+        connection.call("image.import", buildJsonObject { put("url", url) }, waitMs = 10_000).str("key") ?: ""
+
+    suspend fun clearImport(key: String) = runCatching { connection.call("image.import.clear", buildJsonObject { put("key", key) }, waitMs = 4_000) }
+
+    suspend fun removeModel(id: String) = runCatching { connection.call("image.remove", buildJsonObject { put("model", id) }, waitMs = 8_000) }.map { refreshCaps() }
+
+    /** Metadados completos de uma imagem (prompt final, negativo, LoRAs, sampler, fluxo...). */
+    suspend fun meta(id: String): JsonObject? = runCatching { connection.call("image.meta", buildJsonObject { put("id", id) }, waitMs = 6_000) }.getOrNull()
 
     private fun lock(messageId: String) = jobLocks.getOrPut(messageId) { Mutex() }
 
@@ -109,13 +135,13 @@ class ImageJobs(
     // ------------------------------------------------------------------ criar
 
     /** Pedido novo: mensagem do usuário ("Criar imagem") + resposta de imagem, e a tarefa vai para o PC. */
-    suspend fun create(convId: String, prompt: String, options: ImageOptions): String = withContext(Dispatchers.IO) {
+    suspend fun create(convId: String, prompt: String, options: ImageOptions, edit: ImageEdit? = null): String = withContext(Dispatchers.IO) {
         val conv = db.conversations().get(convId) ?: error("conversa não existe")
         val now = System.currentTimeMillis()
-        val job = ImageJob(prompt = prompt.trim(), options = options)
+        val job = ImageJob(prompt = prompt.trim(), options = options, edit = edit)
         val user = MessageEntity(
             id = UUID.randomUUID().toString(), conversationId = convId, parentId = conv.activeLeafId, role = "user",
-            content = prompt.trim(), createdAt = now, kind = "image_request", imageJson = job.encode(),
+            content = prompt.trim().ifEmpty { edit?.label ?: "" }, createdAt = now, kind = "image_request", imageJson = job.encode(),
         )
         db.messages().insert(user)
         if (conv.titleAuto && conv.messageCount == 0) db.conversations().rename(convId, title(prompt), true)
@@ -125,7 +151,7 @@ class ImageJobs(
     /** "Gerar novamente": outra versão para o mesmo pedido (ramo ‹1/2›), com seed nova. */
     suspend fun regenerate(old: MessageEntity): String = withContext(Dispatchers.IO) {
         val job = ImageJob.decode(old.imageJson) ?: error("mensagem sem imagem")
-        startReply(old.conversationId, old.parentId, ImageJob(job.prompt, job.options.copy(seed = null)))
+        startReply(old.conversationId, old.parentId, ImageJob(job.prompt, job.options.copy(seed = null), edit = job.edit?.takeIf { it.op != "recreate" }))
     }
 
     /** "Criar variação": o mesmo pedido de novo, no fim da conversa (as duas ficam visíveis). */
@@ -137,7 +163,7 @@ class ImageJobs(
     /** Tentar de novo depois de um erro: mesma mensagem, mesmos parâmetros (inclusive a seed, se havia). */
     suspend fun retry(old: MessageEntity) = withContext(Dispatchers.IO) {
         val job = ImageJob.decode(old.imageJson) ?: return@withContext
-        val fresh = ImageJob(job.prompt, job.options.copy(seed = job.options.seed ?: job.seed))
+        val fresh = ImageJob(job.prompt, job.options.copy(seed = job.options.seed ?: job.seed), edit = job.edit)
         val jobId = UUID.randomUUID().toString()
         db.messages().setJob(old.id, jobId, MessageStatus.WAITING, old.model)
         db.messages().setImage(old.id, fresh.encode())
@@ -146,11 +172,12 @@ class ImageJobs(
 
     private suspend fun startReply(convId: String, parentId: String?, job: ImageJob, createdAt: Long = System.currentTimeMillis()): String {
         val jobId = UUID.randomUUID().toString()
-        val name = _caps.value?.engine(job.options.engine)?.name
+        val m = _caps.value?.model(job.edit?.model) ?: _caps.value?.modelFor(job.options)
+        val name = m?.name ?: _caps.value?.engine(job.options.engine)?.name
         val reply = MessageEntity(
             id = UUID.randomUUID().toString(), conversationId = convId, parentId = parentId, role = "assistant", content = "",
             createdAt = createdAt, status = MessageStatus.WAITING, jobId = jobId, kind = "image", imageJson = job.encode(),
-            modelName = name, model = _caps.value?.engine(job.options.engine)?.model,
+            modelName = name, model = m?.id ?: _caps.value?.engine(job.options.engine)?.model,
         )
         db.messages().insert(reply)
         engine.commitLeaf(convId, reply.id)
@@ -219,10 +246,26 @@ class ImageJobs(
                     if (!started) {
                         val job = ImageJob.decode(db.messages().get(msg.id)?.imageJson) ?: return
                         val conv = db.conversations().get(msg.conversationId)
+                        // fotos deste celular usadas no pedido (origem, máscara, referência, pose) sobem antes, por hash
+                        val local = (job.options.localInputs + listOfNotNull(job.edit?.source, job.edit?.mask))
+                            .filter { it.kind == "local" && it.sha256 != null && it.path != null && File(it.path).exists() }
+                        if (local.isNotEmpty()) {
+                            engine.uploadBlobs(session, local.map { ChatEngine.BlobRef(it.sha256!!, it.path!!) }) { p, total ->
+                                flow.update { s -> s.copy(upload = p, uploadBytes = total) }
+                            }
+                        }
                         val r = session.call("image.start", buildJsonObject {
                             put("job", jobId)
                             put("prompt", job.prompt)
-                            job.options.toWire().forEach { (k, v) -> put(k, v) }
+                            val edit = job.edit
+                            if (edit == null) job.options.toWire().forEach { (k, v) -> put(k, v) }
+                            else if (edit.op != "recreate") {
+                                // edição: vale o modelo da edição (ou o da imagem original); do resto, o que se aplica
+                                val skip = setOf("engine", "format", "width", "height", "model", "count", "hd", "detail", "reference", "control", "seed")
+                                job.options.toWire().forEach { (k, v) -> if (k !in skip) put(k, v) }
+                                put("engine", "auto")
+                            }
+                            edit?.toWire()?.forEach { (k, v) -> put(k, v) }
                             put("meta", buildJsonObject { put("conv", msg.conversationId); put("msg", msg.id) })
                             conv?.title?.let { put("label", it.take(80)) }
                         }, timeoutMs = 30_000)
@@ -231,11 +274,11 @@ class ImageJobs(
                         if (name != null) db.messages().setModelInfo(msg.id, r.str("model"), name)
                         updateJob(msg.id) {
                             it.copy(model = r.str("model") ?: it.model, modelName = name ?: it.modelName, width = r.int("width"), height = r.int("height"),
-                                steps = r.int("steps"), seed = r.long("seed"), note = r.str("note") ?: it.note)
+                                steps = r.int("steps"), seed = r.long("seed"), note = r.str("note") ?: it.note, guidance = r.dbl("guidance") ?: it.guidance)
                         }
                         val pos = r.int("position")
                         flow.update { s ->
-                            s.copy(modelName = name ?: s.modelName, steps = r.int("steps") ?: s.steps, imageCount = r.int("count") ?: s.imageCount,
+                            s.copy(modelName = name ?: s.modelName, op = r.str("op") ?: s.op, steps = r.int("steps") ?: s.steps, imageCount = r.int("count") ?: s.imageCount,
                                 phase = if (pos != null && pos >= 0) LiveReply.Phase.QUEUED else s.phase, ahead = pos?.takeIf { it >= 0 } ?: s.ahead)
                         }
                     } else {
@@ -277,8 +320,18 @@ class ImageJobs(
                     e.int("step")?.let { st ->
                         phase(LiveReply.Phase.GENERATING)
                         next = next.copy(step = st, steps = e.int("steps") ?: next.steps, imageIndex = e.int("image") ?: next.imageIndex, imageCount = e.int("count") ?: next.imageCount)
+                        val sub = e.str("sub")
+                        next = if (sub != null) next.copy(subStage = if (sub == "detail") "detailing" else if (sub == "refine") "refining" else sub, part = e.int("part"), parts = e.int("parts"))
+                        else if (next.subStage in setOf("detailing", "refining", "upscaling", "detecting")) next else next.copy(subStage = null, part = null, parts = null)
                     }
-                    if (e.str("stage") == "saving") phase(LiveReply.Phase.SAVING)
+                    when (val stg = e.str("stage")) {
+                        "saving" -> phase(LiveReply.Phase.SAVING)
+                        "analyzing", "reference", "detecting", "detailing", "upscaling", "refining" -> {
+                            phase(LiveReply.Phase.GENERATING)
+                            next = next.copy(subStage = stg, part = null, parts = e.int("tiles") ?: e.int("regions") ?: next.parts)
+                        }
+                        "generating" -> next = next.copy(subStage = null, part = null, parts = null)
+                    }
                     e.obj("imageReady")?.let { o ->
                         val img = ImageJob.parseImage(o)
                         val job = updateJob(msg.id) { j -> if (j.images.any { it.id == img.id }) j else j.copy(images = j.images + img, pending = true) }
@@ -332,6 +385,10 @@ class ImageJobs(
                 steps = stats?.int("steps") ?: j.steps, guidance = stats?.dbl("guidance") ?: j.guidance, seed = stats?.long("seed") ?: j.seed,
                 wallMs = stats?.long("wallMs"), generateMs = stats?.long("generateMs"),
                 error = if (status == MessageStatus.DONE) null else error, detail = if (status == MessageStatus.DONE) null else detail,
+                negative = prompt?.str("negative") ?: j.negative, strategy = prompt?.str("strategy") ?: j.strategy,
+                added = prompt?.arr("added")?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content } ?: j.added,
+                loraNames = end.arr("loras")?.mapNotNull { it.asObj()?.str("name") } ?: j.loraNames,
+                sampler = stats?.str("sampler") ?: j.sampler, schedule = stats?.str("schedule") ?: j.schedule,
             )
         }
         // imagens anunciadas só no fim (ex.: retomada depois de o app fechar): baixa agora
@@ -374,6 +431,9 @@ class ImageJobs(
                 guidance = job.guidance, seed = img.seed, format = job.options.format, quality = job.options.quality,
                 createdAt = existing?.createdAt ?: System.currentTimeMillis(), genMs = job.generateMs, bytes = img.bytes, sha256 = img.sha256,
                 path = existing?.path, thumbPath = existing?.thumbPath, favorite = existing?.favorite ?: false,
+                op = job.op, loras = job.loraNames.takeIf { it.isNotEmpty() }?.joinToString(" | ") ?: job.options.loras.takeIf { it.isNotEmpty() }?.joinToString(" | ") { it.name },
+                negative = job.negative, sampler = job.sampler, strategy = job.strategy,
+                parentId = job.edit?.source?.takeIf { it.kind == "pc" }?.id ?: job.edit?.recreate,
             ),
         )
     }
@@ -478,6 +538,63 @@ class ImageJobs(
                 launch { download(m.id, img) {} }
             }
         }
+    }
+
+    // ------------------------------------------------------------------ entradas (fotos deste celular)
+
+    /** Pedido a abrir no modo imagem (ex.: "Usar como referência" na galeria): opções + texto inicial. */
+    val pending = MutableStateFlow<Pair<ImageOptions, String?>?>(null)
+
+    private val inputsDir: File get() = File(context.filesDir, "image-inputs").apply { mkdirs() }
+
+    /**
+     * Prepara uma foto do celular para guiar/editar: orientação corrigida, até 2048 px no lado maior, JPEG 92,
+     * gravada por hash (a mesma foto não ocupa espaço duas vezes e o PC reconhece pelo SHA-256).
+     */
+    suspend fun inputFromUri(uri: android.net.Uri, maxSide: Int = 2048): ImageInput? = withContext(Dispatchers.IO) {
+        runCatching {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@runCatching null
+            val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            var sample = 1
+            while (maxOf(opts.outWidth, opts.outHeight) / (sample * 2) >= maxSide) sample *= 2
+            var bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+                ?: return@runCatching null
+            val rotation = runCatching {
+                androidx.exifinterface.media.ExifInterface(java.io.ByteArrayInputStream(bytes)).rotationDegrees
+            }.getOrDefault(0)
+            if (rotation != 0) {
+                val m = android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }
+                bmp = android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+            }
+            val k = maxSide.toFloat() / maxOf(bmp.width, bmp.height)
+            if (k < 1f) bmp = android.graphics.Bitmap.createScaledBitmap(bmp, (bmp.width * k).toInt(), (bmp.height * k).toInt(), true)
+            val out = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+            val data = out.toByteArray()
+            val sha = Images.sha256(data)
+            val f = File(inputsDir, "$sha.jpg")
+            if (!f.exists()) f.writeBytes(data)
+            ImageInput("local", path = f.path, sha256 = sha, width = bmp.width, height = bmp.height, thumb = f.path)
+        }.getOrNull()
+    }
+
+    /** Máscara pintada (PNG: o PC lê branco/alfa como "mudar aqui"). */
+    suspend fun inputFromPng(bmp: android.graphics.Bitmap): ImageInput = withContext(Dispatchers.IO) {
+        val out = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+        val data = out.toByteArray()
+        val sha = Images.sha256(data)
+        val f = File(inputsDir, "$sha.png")
+        if (!f.exists()) f.writeBytes(data)
+        ImageInput("local", path = f.path, sha256 = sha, width = bmp.width, height = bmp.height)
+    }
+
+    /** Edição de uma criação: mensagem nova na conversa dela (ou numa nova), tarefa no PC. Devolve a conversa. */
+    suspend fun edit(creation: com.noc.app.data.db.CreationEntity, edit: ImageEdit, prompt: String, options: ImageOptions, newConversation: suspend () -> String): String {
+        val convId = creation.conversationId?.takeIf { db.conversations().get(it) != null } ?: newConversation()
+        create(convId, prompt, options, edit)
+        return convId
     }
 
     /** Apaga do celular (e, se [alsoPc], do PC). */

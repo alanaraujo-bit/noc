@@ -813,6 +813,10 @@ public sealed class JobManager : IDisposable
         {
             end = new JsonObject { ["reason"] = "error", ["error"] = e.Code, ["detail"] = e.Message };
         }
+        catch (Exception) when (job.CancelRequested)
+        {
+            end = new JsonObject { ["reason"] = "cancelled" };
+        }
         catch (Exception e)
         {
             Trace?.Invoke($"tarefa de imagem {Short(job.Id)} falhou: {e.GetType().Name} {e.Message}");
@@ -845,14 +849,21 @@ public sealed class JobManager : IDisposable
                 if (job.Phase != "generating") job.SetPhase(JobState.Generating, "generating");
                 if (e["preview"] is JsonValue pv)
                     job.EmitTransient(new JsonObject { ["preview"] = pv.GetValue<string>(), ["image"] = e["image"]?.DeepClone(), ["step"] = e["step"]?.DeepClone() });
-                job.Emit(new JsonObject
+                var o = new JsonObject
                 {
                     ["step"] = e["step"]?.DeepClone(), ["steps"] = e["steps"]?.DeepClone(), ["image"] = e["image"]?.DeepClone(), ["count"] = e["count"]?.DeepClone(),
-                });
+                };
+                // subetapas da fase 4: detail pass e refino em blocos (com "parte 2 de 6")
+                if (e["phase"]?.GetValue<string>() is { } sub && sub != "generating") { o["sub"] = sub; o["part"] = e["part"]?.DeepClone(); o["parts"] = e["parts"]?.DeepClone(); }
+                job.Emit(o);
                 break;
             }
             case "stage":
-                job.Emit(new JsonObject { ["stage"] = e["stage"]?.DeepClone(), ["image"] = e["image"]?.DeepClone(), ["count"] = e["count"]?.DeepClone() });
+                job.Emit(new JsonObject
+                {
+                    ["stage"] = e["stage"]?.DeepClone(), ["image"] = e["image"]?.DeepClone(), ["count"] = e["count"]?.DeepClone(), ["what"] = e["what"]?.DeepClone(),
+                    ["regions"] = e["regions"]?.DeepClone(), ["tiles"] = e["tiles"]?.DeepClone(), ["factor"] = e["factor"]?.DeepClone(),
+                });
                 break;
             case null when e["imageReady"] is JsonObject:
                 job.Emit((JsonObject)e.DeepClone());
