@@ -187,7 +187,8 @@ public sealed class ImageEngineService : IAsyncDisposable
         await _gate.WaitAsync(ct);
         _sink = publish;
         _sinkJob = job.Id;
-        var lowVram = false;
+        // já carregado no modo econômico (VRAM estava apertada): continua nele em vez de recarregar tudo
+        var lowVram = WorkerAlive && Loaded == def && LoadedTransformer != def.Defaults.Transformer;
         long loadMs = 0;
         try
         {
@@ -292,7 +293,7 @@ public sealed class ImageEngineService : IAsyncDisposable
     {
         var d = def.Defaults;
         var resident = lowVram && d.Transformer == "bf16" ? d.ResidentGiB - d.TransformerGiB / 2 : d.ResidentGiB;
-        return resident + d.PeakExtraGiB + 0.8;
+        return resident + d.PeakExtraGiB + 0.5;
     }
 
     /// <summary>
@@ -302,8 +303,12 @@ public sealed class ImageEngineService : IAsyncDisposable
     /// </summary>
     private async Task<bool> MakeRoomAsync(ImageModelDef def, bool lowVram, Action<string, JsonObject?> phase, CancellationToken ct)
     {
-        // outro modelo de imagem carregado: sai primeiro (o worker fica, só descarrega)
-        if (WorkerAlive && Loaded is not null && Loaded != def)
+        // um modelo de conversa está carregando agora (ex.: a devolução depois da última imagem):
+        // espera terminar para medir a VRAM de verdade, senão os dois acabam juntos na GPU
+        for (var i = 0; i < 360 && _models.Op != ModelOpState.Idle; i++) await Task.Delay(500, ct);
+        await _models.RefreshAsync(ct);
+        // o que o próprio motor ocupa (outro modelo ou outro modo) sai primeiro; o worker fica, só descarrega
+        if (WorkerAlive && Loaded is not null)
         {
             try { await _worker!.RequestAsync(new JsonObject { ["cmd"] = "unload" }, ct, TimeSpan.FromSeconds(60)); }
             catch (WorkerException) { await ShutdownWorkerAsync("switch"); }

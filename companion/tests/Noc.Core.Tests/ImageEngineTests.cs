@@ -355,6 +355,48 @@ public class ImageEngineTests(ITestOutputHelper log)
         finally { Environment.SetEnvironmentVariable("NOC_IMAGE_FAULT_OOM", null); }
     }
 
+    [Fact]
+    public async Task B1_Image_arriving_while_the_llm_is_coming_back_never_shares_the_gpu()
+    {
+        if (!Enabled) return;
+        await using var p = await PairedAsync(tweak: h => h.Settings.ImageKeepWarmWithLlmSeconds = 3);
+        var fast = p.Host.Catalog.ModelForTier(Library.Tiers.Fast)!;
+        await p.Host.Models.EnsureLoadedAsync(fast, null, CancellationToken.None, Library.Tiers.Fast);
+        var first = Guid.NewGuid().ToString();
+        Ok(await p.Client.CallAsync("image.start", new JsonObject { ["job"] = first, ["prompt"] = "a red bicycle", ["engine"] = "fast" }));
+        Assert.Equal("stop", (await Collect(p.Client, first, TimeSpan.FromMinutes(10))).End["reason"]!.GetValue<string>());
+        // o motor fica ocioso, solta a GPU e começa a devolver o Qwen; no meio da devolução chega outra imagem
+        await WaitAsync(() => p.Host.Models.Op == LmStudio.ModelOpState.Loading, TimeSpan.FromMinutes(2), "a devolução do LLM começar");
+        var second = Guid.NewGuid().ToString();
+        Ok(await p.Client.CallAsync("image.start", new JsonObject { ["job"] = second, ["prompt"] = "a blue bicycle", ["engine"] = "fast" }));
+        var overlap = false;
+        var run = await Collect(p.Client, second, TimeSpan.FromMinutes(10), onEvent: e =>
+        {
+            // enquanto gera, nenhum LLM pode estar na GPU junto
+            if (e["step"] is not null && p.Host.Models.Last.Models.Any(m => m.Loaded && m.Type == "llm")) overlap = true;
+            return Task.CompletedTask;
+        });
+        log.WriteLine("fim: " + run.End.ToJsonString());
+        Assert.Equal("stop", run.End["reason"]!.GetValue<string>());
+        Assert.False(overlap, "LLM e motor de imagem ficaram juntos na GPU");
+    }
+
+    [Fact]
+    public async Task B2_Warm_engine_in_economy_mode_is_reused_not_refused()
+    {
+        if (!Enabled) return;
+        await using var p = await PairedAsync(tweak: h => h.Settings.ImageVramReserveGiB = 7);
+        for (var i = 0; i < 2; i++)
+        {
+            var job = Guid.NewGuid().ToString();
+            Ok(await p.Client.CallAsync("image.start", new JsonObject { ["job"] = job, ["prompt"] = "a green apple", ["engine"] = "fast" }));
+            var run = await Collect(p.Client, job, TimeSpan.FromMinutes(10));
+            log.WriteLine($"{i}: " + run.End.ToJsonString());
+            Assert.Equal("stop", run.End["reason"]!.GetValue<string>());
+            Assert.Equal("fp8", run.End["stats"]!["transformer"]!.GetValue<string>());
+        }
+    }
+
     private static System.Diagnostics.Process HogVram(int gb)
     {
         if (!ImagePaths.HasRoot) ImagePaths.Root = ImagePaths.ChooseDefaultRoot();
