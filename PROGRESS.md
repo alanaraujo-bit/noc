@@ -79,3 +79,12 @@
 - [ ] Trocar entre 2 PCs (DevHost como 2º PC)
 - [ ] Firewall (regra no instalador + aviso de rede Pública); publish self-contained; instalador Inno Setup; teste install/uninstall
 - [ ] README, BLOCKERS (SmartScreen/Play Protect, backup do keystore, celular físico)
+
+### 2026-09-25 — Entrega 1.0.0 (pedido do usuário: "finaliza logo")
+- Repositório: https://github.com/alanaraujo-bit/noc (público) · Release v1.0.0 com
+  `Noc-Companion-Setup-1.0.0.exe` (Inno Setup, self-contained, firewall localsubnet, autostart) e `Noc-1.0.0.apk` (R8, assinado).
+- Instalador testado: install/uninstall silencioso por usuário, app instalado sobe LAN+relay, desinstalação limpa Run key.
+- Correções finais: tema do Companion (Light.xaml fixo no App.xaml vencia o ThemeManager), nomes de acessibilidade.
+- Ainda NÃO validados na UI (código existe): pastas/arquivar-swipe/duplicar/exportar no histórico, criação de perfil/prompt e
+  fluxo "Escolher da biblioteca", anexo de texto, carregar/descarregar modelo pelo celular, revogar no PC → celular,
+  force-stop no meio da geração, Doze, conversa gigante (e a recarga do Room a cada 700 ms no streaming), troca entre 2 PCs.
