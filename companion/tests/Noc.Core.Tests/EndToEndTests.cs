@@ -19,10 +19,12 @@ public class EndToEndTests(ITestOutputHelper log)
     internal static async Task<CompanionHost> StartHostAsync(bool remote, string? root = null, bool voice = false, bool image = false)
     {
         AppPaths.Root = root ?? Path.Combine(Path.GetTempPath(), "noc-e2e-" + Guid.NewGuid().ToString("N")[..8]);
+        if (image) PinImageRoot();
         var host = new CompanionHost();
         host.Settings.VoiceEnabled = voice;
         host.Settings.ImageEnabled = image;
         host.Settings.AutoImportModels = false;
+        host.Settings.ImageWatchDownloads = false;
         host.Settings.KeepLmServerAlive = false;
         host.Catalog.Data.Preload = false;
         host.Settings.LanPort = 47900 + Random.Shared.Next(0, 90);
@@ -35,6 +37,25 @@ public class EndToEndTests(ITestOutputHelper log)
             Assert.Equal(Net.RelayState.Online, host.Relay.State);
         }
         return host;
+    }
+
+    /// <summary>
+    /// Os testes usam a mesma raiz do motor de imagem do Companion instalado (modelos já baixados), nunca uma escolhida
+    /// na hora pelo espaço livre — senão, com os discos parecidos, um teste começaria a baixar 70 GB em outro disco.
+    /// </summary>
+    internal static void PinImageRoot()
+    {
+        var settings = Path.Combine(AppPaths.Root, "settings.json");
+        if (File.Exists(settings)) return;
+        var root = Environment.GetEnvironmentVariable("NOC_IMAGE_ROOT");
+        if (root is null)
+        {
+            var prod = Path.Combine(AppPaths.DefaultRoot, "settings.json");
+            try { root = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(prod))?["ImageEngineRoot"]?.GetValue<string>(); } catch (Exception) { }
+        }
+        if (string.IsNullOrEmpty(root)) return;
+        Directory.CreateDirectory(AppPaths.Root);
+        File.WriteAllText(settings, new System.Text.Json.Nodes.JsonObject { ["ImageEngineRoot"] = root }.ToJsonString());
     }
 
     private async Task<(string Reasoning, string Content, JsonObject End)> CollectJob(TestClient c, string job)

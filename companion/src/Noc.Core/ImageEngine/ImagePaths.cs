@@ -47,7 +47,7 @@ public static class ImagePaths
     public static string UserLoras => Path.Combine(User, "loras");
 
     public static string ModelDir(ImageModelDef m, string revision) => Path.Combine(Models, m.Id, revision);
-    public static string CacheDir(ImageModelDef m, string revision) => Path.Combine(Cache, m.Id, revision[..12]);
+    public static string CacheDir(ImageModelDef m, string revision) => Path.Combine(Cache, m.Id, revision[..Math.Min(12, revision.Length)]);
 
     /// <summary>Estado dos modelos instalados (fica com os outros dados do Companion).</summary>
     public static string StateFile => Path.Combine(AppPaths.Root, "image-models.json");

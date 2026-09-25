@@ -14,6 +14,7 @@
 
 from noc_common import *  # noqa: E402,F401,F403  (canal do protocolo primeiro, antes de qualquer biblioteca)
 import noc_common  # noqa: E402
+import re  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import ImageFilter  # noqa: E402
 
@@ -209,7 +210,8 @@ REWRITE_TAGS = (
     "when it has none; then character and series names if the user named them; then appearance, clothing, pose, expression, "
     "action, setting, lighting, composition and art style tags. Translate every requested detail faithfully. Do not invent "
     "characters, people, clothing, age or body details that were not requested. Keep any text that should appear inside the "
-    "image in quotes. No quality tags (like masterpiece), no rating tags, no explanations. At most 40 tags."
+    "image in quotes. No quality tags (like masterpiece), no rating tags, no explanations. Separate tags with commas. At most 30 tags, "
+    "never repeat a tag."
 )
 REWRITE_PONY = (
     "You turn a user's image request into a prompt for an anime/cartoon image model that understands English sentences and "
@@ -217,7 +219,7 @@ REWRITE_PONY = (
     "comma-separated lowercase tags for the key details (subject count like 1girl only when people are requested, appearance, "
     "clothing, pose, expression, setting, lighting, style). Translate every requested detail faithfully and do not invent "
     "people, characters, clothing, age or body details that were not requested. Keep any text that should appear inside the "
-    "image in quotes. No score tags, no rating tags, no quality tags, no explanations."
+    "image in quotes. No score tags, no rating tags, no quality tags, no explanations. At most 20 tags, never repeat a tag."
 )
 REWRITE_MODES = {"translate": REWRITE_TRANSLATE, "enhance": REWRITE_ENHANCE, "tags": REWRITE_TAGS, "pony": REWRITE_PONY}
 
@@ -293,7 +295,9 @@ class Rewriter:
                 result = result.split("</think>", 1)[1].strip()
             result = result.strip().strip('"').strip()
             if mode in ("tags", "pony"):
-                result = " ".join(result.split())  # uma linha só
+                # uma linha só: tags em linhas separadas (ou com "- ") viram lista separada por vírgulas
+                parts = [p.strip(" -*\t") for p in re.split(r"[\n,]+", result)]
+                result = ", ".join(" ".join(p.split()) for p in parts if p.strip(" -*\t"))
             return result
         finally:
             if moved:
@@ -681,7 +685,9 @@ class Runner:
 
         try:
             send("stage", id=job, stage="encoding")
-            if self.sdxl:
+            if eng is None or eng.pipe is None:
+                embeds = {}
+            elif self.sdxl:
                 embeds = eng.encode_prompt(c["prompt"], c.get("negative", ""), c.get("clipSkip"))
             else:
                 embeds = eng.encode_prompt(c["prompt"])
@@ -751,7 +757,7 @@ class Runner:
             "meanStepMs": int(mean_step * 1000) if mean_step else None,
             "peakAllocatedMb": torch.cuda.max_memory_allocated() // (1024 * 1024),
             "peakReservedMb": torch.cuda.max_memory_reserved() // (1024 * 1024),
-            "engine": eng.name, "transformer": eng.transformer_precision, "textEncoder": eng.te_mode,
+            "engine": eng.name if eng else None, "transformer": eng.transformer_precision if eng else None, "textEncoder": eng.te_mode if eng else None,
             "chunks": embeds.get("chunks") if isinstance(embeds, dict) else None,
         }, mem=gpu_mem(), **rss_mb())
 
@@ -792,10 +798,16 @@ class Runner:
         return res
 
 
+def _plain_post(c):
+    """Só ampliação (sem refino nem detail pass): não precisa de modelo de difusão carregado."""
+    posts = c.get("post") or []
+    return c.get("op") == "post" and posts and all(p.get("kind") == "upscale" and not p.get("refine") for p in posts)
+
+
 def cmd_generate(c):
     _fault_oom()
     eng = State.engine
-    if eng is None or eng.pipe is None:
+    if (eng is None or eng.pipe is None) and not _plain_post(c):
         raise WorkerError("not_loaded", "motor não carregado")
     State.current_id = c["id"]
     Runner(c).run()

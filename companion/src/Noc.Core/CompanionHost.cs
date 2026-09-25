@@ -43,7 +43,7 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
     private Timer? _imageDebounce;
 
     /// <summary>Recursos que este Companion oferece (o celular se adapta a Companions antigos).</summary>
-    public static readonly string[] Features = ["tiers", "blobs", "stt", "jobs2", "bench", "library", "image"];
+    public static readonly string[] Features = ["tiers", "blobs", "stt", "jobs2", "bench", "library", "image", "image2", "loras", "image_edit"];
     public LanServer Lan { get; }
     public RelayClient Relay { get; }
 
@@ -142,6 +142,11 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
         Images.Activity += Activity;
         Images.Trace += m => Diag.Write("imagem", m);
         Images.Store.Installed += m => Images.AfterInstall(m);
+        Images.BlobGet = Blobs.Get;
+        Images.Library.Changed += OnImageChanged;
+        Images.Library.Activity += Activity;
+        Images.Library.Trace += m => Diag.Write("imagem", m);
+        Images.Library.LookupEnabled = () => Settings.ImageLookupCivitai;
         Pairing.OffersChanged += () => Changed?.Invoke();
     }
 
@@ -162,6 +167,8 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
         Jobs.RecoverFromDisk();
         // Motor de imagem: continua downloads interrompidos e instala o modelo padrão na primeira vez.
         Images.AutoSetup();
+        if (Settings.ImageEnabled && Settings.ImageWatchDownloads)
+            Images.Library.Watch(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"));
         _ = Task.Run(RefreshHfUserAsync);
         _pollTimer = new Timer(_ => _ = HealthTickAsync(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
         _ = Task.Run(async () =>
@@ -406,7 +413,7 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
             {
                 ["enabled"] = Images.Enabled, ["state"] = Images.State.ToString().ToLowerInvariant(), ["loaded"] = Images.Loaded?.Id,
                 ["name"] = Images.Loaded?.Name, ["optimizing"] = Images.Optimizing,
-                ["installed"] = new JsonArray(ImageEngine.ImageCatalog.All.Where(Images.Store.IsInstalled).Select(m => (JsonNode)m.Id).ToArray()),
+                ["installed"] = new JsonArray(ImageEngine.ImageCatalog.Models.Where(Images.Ready).Select(m => (JsonNode)m.Id).ToArray()),
             },
             ["last"] = lastDone is null ? null : new JsonObject
             {

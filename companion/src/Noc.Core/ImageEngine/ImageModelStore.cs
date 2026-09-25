@@ -12,7 +12,7 @@ namespace Noc.Core.ImageEngine;
 public enum ImageModelState { NotInstalled, Checking, Downloading, Verifying, Installed, Paused, Failed, AuthRequired, TermsRequired, NoSpace }
 
 /// <summary>Um arquivo do repositório oficial, com o que é preciso para conferir a integridade.</summary>
-public sealed record RepoFile(string Path, long Size, string? Sha256, string? GitOid);
+public sealed record RepoFile(string Path, long Size, string? Sha256, string? GitOid, string? Url = null);
 
 /// <summary>Estado persistido de um modelo instalado (ou em instalação).</summary>
 public sealed class InstalledModel
@@ -130,8 +130,24 @@ public sealed class ImageModelStore : IDisposable
 
     public bool IsInstalled(ImageModelDef m)
     {
+        if (m.Local) return m.Checkpoint is not null && File.Exists(m.Checkpoint);
         var r = Rec(m);
         return r.Complete && r.Revision is not null && Directory.Exists(ImagePaths.ModelDir(m, r.Revision));
+    }
+
+    /// <summary>Caminho do checkpoint de arquivo único (SDXL), ou null se não instalado.</summary>
+    public string? CheckpointPath(ImageModelDef m)
+    {
+        if (m.Checkpoint is null) return null;
+        if (m.Local) return File.Exists(m.Checkpoint) ? m.Checkpoint : null;
+        var dir = InstalledDir(m);
+        return dir is null ? null : Path.Combine(dir, m.Checkpoint.Replace('/', '\\'));
+    }
+
+    /// <summary>Espera a instalação em andamento deste modelo terminar (a fila de instalação instala um por vez).</summary>
+    public async Task WaitIdleAsync(ImageModelDef m, CancellationToken ct)
+    {
+        while (Busy(m)) await Task.Delay(1000, ct);
     }
 
     public string? InstalledDir(ImageModelDef m)
@@ -156,6 +172,12 @@ public sealed class ImageModelStore : IDisposable
     {
         var r = Rec(m);
         return IsInstalled(m) && r.LatestRevision is { } l && l != r.Revision ? l : null;
+    }
+
+    /// <summary>O Companion já instalou este modelo sozinho alguma vez (se o usuário removeu, não volta sozinho).</summary>
+    public bool WasAutoInstalled(ImageModelDef m)
+    {
+        lock (_lock) return _state.AutoInstalled.Contains(m.Id);
     }
 
     /// <summary>Marca a instalação automática (uma vez só por modelo). Devolve false se já tinha sido feita.</summary>
@@ -202,7 +224,9 @@ public sealed class ImageModelStore : IDisposable
         var installed = IsInstalled(m);
         return new JsonObject
         {
-            ["id"] = m.Id, ["name"] = m.Name, ["profile"] = m.Profile, ["engine"] = m.Engine,
+            ["id"] = m.Id, ["name"] = m.Name, ["profile"] = m.Profile, ["engine"] = m.Engine, ["family"] = m.Family,
+            ["tagline"] = m.Tagline, ["category"] = m.Category, ["version"] = m.Version, ["origin"] = m.Origin, ["local"] = m.Local,
+            ["licenseNote"] = m.LicenseNote, ["sha256"] = m.Sha256, ["aux"] = m.IsAux,
             ["state"] = st switch
             {
                 ImageModelState.NotInstalled => "not_installed", ImageModelState.Checking => "checking",
@@ -251,6 +275,9 @@ public sealed class ImageModelStore : IDisposable
     /// <summary>Lista os arquivos da revisão (com hashes). Em repositório com termos, exige token e termos aceitos.</summary>
     public async Task<List<RepoFile>> ListAsync(ImageModelDef m, string revision, string? token, CancellationToken ct)
     {
+        // fonte direta (Civitai, GitHub): lista fixa, com tamanho e SHA-256 conhecidos de antemão
+        if (m.Files is { Length: > 0 } direct)
+            return direct.Select(f => new RepoFile(f.Path, f.Size, f.Sha256, null, f.Url)).ToList();
         using var res = await _http.SendAsync(Req(HttpMethod.Get, $"https://huggingface.co/api/models/{m.Repo}/tree/{revision}?recursive=true", token), ct);
         if (res.StatusCode == HttpStatusCode.Unauthorized) throw new ImageStoreException(ImageModelState.AuthRequired, "auth_required");
         if (res.StatusCode == HttpStatusCode.Forbidden) throw new ImageStoreException(ImageModelState.TermsRequired, "terms_required");
@@ -294,7 +321,7 @@ public sealed class ImageModelStore : IDisposable
     public async Task CheckUpdateAsync(ImageModelDef m, CancellationToken ct)
     {
         var r = Rec(m);
-        if (!IsInstalled(m)) return;
+        if (!IsInstalled(m) || m.Local || m.Files is not null || string.IsNullOrEmpty(m.Repo)) return;
         try
         {
             using var res = await _http.SendAsync(Req(HttpMethod.Get, $"https://huggingface.co/api/models/{m.Repo}/revision/main", HfToken.Load()), ct);
@@ -322,6 +349,7 @@ public sealed class ImageModelStore : IDisposable
     /// <summary>Instala (ou continua a instalação). Idempotente: se já está rodando, não faz nada.</summary>
     public void StartInstall(ImageModelDef m, string? revision = null)
     {
+        if (m.Local) return;
         CancellationTokenSource cts;
         lock (_lock)
         {
@@ -333,6 +361,12 @@ public sealed class ImageModelStore : IDisposable
         _ = Task.Run(async () =>
         {
             try { await InstallAsync(m, revision ?? m.Revision, cts.Token); }
+            catch (Exception e)
+            {
+                // nada de falhar em silêncio: a tela mostra o erro e o diagnóstico guarda o motivo
+                if (LiveProgress(m) is { } lp) { lp.State = ImageModelState.Failed; lp.Error = "internal"; lp.Detail = "A instalação falhou no PC. Tente de novo."; }
+                Trace?.Invoke($"instalação de {m.Id} falhou: {e.GetType().Name} {e.Message}");
+            }
             finally
             {
                 lock (_lock) _running.Remove(m.Id);
@@ -351,7 +385,7 @@ public sealed class ImageModelStore : IDisposable
     /// <summary>Instalações que estavam em andamento quando o Companion fechou.</summary>
     public void ResumePending()
     {
-        foreach (var m in ImageCatalog.All)
+        foreach (var m in ImageCatalog.All.Where(x => !x.Local))
             if (Rec(m) is { Resume: true, Complete: false }) StartInstall(m, Rec(m).Revision);
     }
 
@@ -411,7 +445,7 @@ public sealed class ImageModelStore : IDisposable
                 p.FilesDone = 0;
                 p.State = ImageModelState.Downloading;
                 Activity?.Invoke($"Instalando {m.Name} ({Gb(p.Total)})", "model");
-                Trace?.Invoke($"instalação de {m.Id}@{revision[..12]}: {files.Count} arquivos, {p.Total} bytes, faltam {missing}");
+                Trace?.Invoke($"instalação de {m.Id}@{revision[..Math.Min(12, revision.Length)]}: {files.Count} arquivos, {p.Total} bytes, faltam {missing}");
                 Changed?.Invoke();
 
                 using var ticker = new Timer(_ => Tick(p), null, 1000, 1000);
@@ -570,8 +604,8 @@ public sealed class ImageModelStore : IDisposable
         Interlocked.Add(ref p.Done, have);
         if (have == f.Size) return;
         // a URL "resolve" é pedida de novo a cada tentativa: o link assinado da CDN expira
-        var url = $"https://huggingface.co/{m.Repo}/resolve/{revision}/{Uri.EscapeDataString(f.Path).Replace("%2F", "/")}";
-        using var req = Req(HttpMethod.Get, url, token);
+        var url = f.Url ?? $"https://huggingface.co/{m.Repo}/resolve/{revision}/{Uri.EscapeDataString(f.Path).Replace("%2F", "/")}";
+        using var req = Req(HttpMethod.Get, url, f.Url is null ? token : null);
         if (have > 0) req.Headers.Range = new RangeHeaderValue(have, null);
         using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
         if (res.StatusCode == HttpStatusCode.Unauthorized) throw new ImageStoreException(ImageModelState.AuthRequired, "auth_required");
@@ -660,6 +694,16 @@ public sealed class ImageModelStore : IDisposable
     /// <summary>Remove o modelo (arquivos e otimizações derivadas).</summary>
     public void Delete(ImageModelDef m)
     {
+        if (m.Local)
+        {
+            // importado: sai do registro; o arquivo só é apagado se estiver na biblioteca do Noc (cópia/vínculo nosso)
+            if (m.Checkpoint is { } f && Path.GetFullPath(f).StartsWith(Path.GetFullPath(ImagePaths.UserCheckpoints), StringComparison.OrdinalIgnoreCase))
+                try { File.Delete(f); } catch (Exception) { }
+            ImageCatalog.RemoveCustom(m.Id);
+            Activity?.Invoke($"{m.Name} removido do PC", "model");
+            Changed?.Invoke();
+            return;
+        }
         Pause(m);
         var r = Rec(m);
         try { Directory.Delete(Path.Combine(ImagePaths.Models, m.Id), true); } catch (Exception) { }

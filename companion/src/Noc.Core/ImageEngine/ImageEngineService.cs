@@ -12,11 +12,14 @@ namespace Noc.Core.ImageEngine;
 
 public enum EngineState { Off, Preparing, Starting, Loading, Ready, Working, Releasing, Failed }
 
+/// <summary>LoRA pedido numa geração (id da biblioteca + peso).</summary>
+public sealed record LoraUse(string Id, double Weight);
+
 /// <summary>Pedido de imagem (vem do celular pelo image.start; fica no diário da tarefa).</summary>
 public sealed record ImageRequest
 {
     public required string Prompt { get; init; }
-    /// <summary>fast | quality | auto (como o usuário escolheu).</summary>
+    /// <summary>fast | quality | auto | model (como o usuário escolheu).</summary>
     public string Choice { get; init; } = "fast";
     /// <summary>Modelo resolvido no momento do pedido.</summary>
     public required string Model { get; init; }
@@ -26,6 +29,7 @@ public sealed record ImageRequest
     /// <summary>fast | standard | high</summary>
     public string Quality { get; init; } = "standard";
     public int Steps { get; init; }
+    /// <summary>Guidance (FLUX) ou CFG (SDXL).</summary>
     public double Guidance { get; init; }
     public int Count { get; init; } = 1;
     public long Seed { get; init; }
@@ -33,20 +37,80 @@ public sealed record ImageRequest
     /// <summary>Por que o motor automático escolheu este modelo (para mostrar em Detalhes).</summary>
     public string? AutoNote { get; init; }
 
+    // ---- fase 4
+    /// <summary>txt2img | img2img (variação) | inpaint | outpaint | upscale | detail | hd</summary>
+    public string Op { get; init; } = "txt2img";
+    /// <summary>Negativo escrito pela pessoa (o do modelo entra sozinho, exceto no RAW).</summary>
+    public string? Negative { get; init; }
+    /// <summary>RAW: o prompt vai exatamente como foi escrito.</summary>
+    public bool Raw { get; init; }
+    public string? Sampler { get; init; }
+    public string? Schedule { get; init; }
+    public int? ClipSkip { get; init; }
+    public double? GuidanceRescale { get; init; }
+    /// <summary>Força da edição (img2img/inpaint): 0 = igual, 1 = tudo novo.</summary>
+    public double? Strength { get; init; }
+    /// <summary>Imagem de origem: "img:&lt;id no PC&gt;" ou "blob:&lt;sha256&gt;" (enviada pelo celular).</summary>
+    public string? Source { get; init; }
+    /// <summary>Máscara do inpaint (PNG com alfa ou tons de cinza; branco = mudar): "blob:&lt;sha256&gt;".</summary>
+    public string? Mask { get; init; }
+    /// <summary>Outpaint: pixels a acrescentar em cada lado.</summary>
+    public int[]? Expand { get; init; }
+    /// <summary>ControlNet: pose | depth | canny (+ imagem e força).</summary>
+    public string? ControlType { get; init; }
+    public string? ControlSource { get; init; }
+    public double? ControlScale { get; init; }
+    /// <summary>Imagem de referência (IP-Adapter) e força.</summary>
+    public string? Reference { get; init; }
+    public double? ReferenceScale { get; init; }
+    /// <summary>Detail pass: rostos, mãos.</summary>
+    public string[]? Detail { get; init; }
+    /// <summary>Ampliação (2 ou 4) e modo Alta Definição (amplia e refina com o modelo).</summary>
+    public int Upscale { get; init; }
+    public bool Hd { get; init; }
+    public List<LoraUse> Loras { get; init; } = [];
+    /// <summary>Recriar: prompt final e negativo exatos (não recompila — o reescritor pode mudar entre versões).</summary>
+    public string? FinalPrompt { get; init; }
+    public string? FinalNegative { get; init; }
+    /// <summary>Imagem da qual esta nasceu (variação, edição, recriação).</summary>
+    public string? Parent { get; init; }
+
+    public bool IsEdit => Op is not "txt2img";
+    /// <summary>Só ampliação (sem refino): não precisa de nenhum modelo de difusão.</summary>
+    public bool PlainUpscale => Op == "upscale" && !Hd && (Detail is null || Detail.Length == 0);
+
     public JsonObject ToJson() => new()
     {
         ["kind"] = "image", ["prompt"] = Prompt, ["choice"] = Choice, ["model"] = Model, ["width"] = Width, ["height"] = Height,
         ["format"] = Format, ["quality"] = Quality, ["steps"] = Steps, ["guidance"] = Guidance, ["count"] = Count, ["seed"] = Seed,
-        ["enhance"] = Enhance, ["autoNote"] = AutoNote,
+        ["enhance"] = Enhance, ["autoNote"] = AutoNote, ["op"] = Op, ["negative"] = Negative, ["raw"] = Raw, ["sampler"] = Sampler,
+        ["schedule"] = Schedule, ["clipSkip"] = ClipSkip, ["guidanceRescale"] = GuidanceRescale, ["strength"] = Strength, ["source"] = Source,
+        ["mask"] = Mask, ["expand"] = Expand is null ? null : new JsonArray(Expand.Select(x => (JsonNode)x).ToArray()),
+        ["controlType"] = ControlType, ["controlSource"] = ControlSource, ["controlScale"] = ControlScale, ["reference"] = Reference,
+        ["referenceScale"] = ReferenceScale, ["detail"] = Detail is null ? null : new JsonArray(Detail.Select(x => (JsonNode)x).ToArray()),
+        ["upscale"] = Upscale, ["hd"] = Hd,
+        ["loras"] = new JsonArray(Loras.Select(l => (JsonNode)new JsonObject { ["id"] = l.Id, ["weight"] = l.Weight }).ToArray()),
+        ["finalPrompt"] = FinalPrompt, ["finalNegative"] = FinalNegative, ["parent"] = Parent,
     };
+
+    private static T? V<T>(JsonObject o, string k) => o[k] is JsonValue v && v.TryGetValue<T>(out var r) ? r : default;
 
     public static ImageRequest FromJson(JsonObject o) => new()
     {
-        Prompt = o["prompt"]!.GetValue<string>(), Choice = o["choice"]?.GetValue<string>() ?? "fast", Model = o["model"]!.GetValue<string>(),
-        Width = o["width"]?.GetValue<int>() ?? 1024, Height = o["height"]?.GetValue<int>() ?? 1024, Format = o["format"]?.GetValue<string>() ?? "square",
-        Quality = o["quality"]?.GetValue<string>() ?? "standard", Steps = o["steps"]?.GetValue<int>() ?? 0, Guidance = o["guidance"]?.GetValue<double>() ?? 0,
+        Prompt = o["prompt"]!.GetValue<string>(), Choice = V<string>(o, "choice") ?? "fast", Model = o["model"]!.GetValue<string>(),
+        Width = o["width"]?.GetValue<int>() ?? 1024, Height = o["height"]?.GetValue<int>() ?? 1024, Format = V<string>(o, "format") ?? "square",
+        Quality = V<string>(o, "quality") ?? "standard", Steps = o["steps"]?.GetValue<int>() ?? 0, Guidance = o["guidance"]?.GetValue<double>() ?? 0,
         Count = o["count"]?.GetValue<int>() ?? 1, Seed = o["seed"]?.GetValue<long>() ?? 0, Enhance = o["enhance"]?.GetValue<bool>() ?? false,
-        AutoNote = o["autoNote"]?.GetValue<string>(),
+        AutoNote = V<string>(o, "autoNote"), Op = V<string>(o, "op") ?? "txt2img", Negative = V<string>(o, "negative"), Raw = V<bool>(o, "raw"),
+        Sampler = V<string>(o, "sampler"), Schedule = V<string>(o, "schedule"), ClipSkip = o["clipSkip"] is null ? null : V<int>(o, "clipSkip"),
+        GuidanceRescale = o["guidanceRescale"] is null ? null : V<double>(o, "guidanceRescale"), Strength = o["strength"] is null ? null : V<double>(o, "strength"),
+        Source = V<string>(o, "source"), Mask = V<string>(o, "mask"), Expand = (o["expand"] as JsonArray)?.Select(x => x!.GetValue<int>()).ToArray(),
+        ControlType = V<string>(o, "controlType"), ControlSource = V<string>(o, "controlSource"),
+        ControlScale = o["controlScale"] is null ? null : V<double>(o, "controlScale"), Reference = V<string>(o, "reference"),
+        ReferenceScale = o["referenceScale"] is null ? null : V<double>(o, "referenceScale"),
+        Detail = (o["detail"] as JsonArray)?.Select(x => x!.GetValue<string>()).ToArray(), Upscale = V<int>(o, "upscale"), Hd = V<bool>(o, "hd"),
+        Loras = (o["loras"] as JsonArray)?.OfType<JsonObject>().Select(l => new LoraUse(l["id"]!.GetValue<string>(), l["weight"]?.GetValue<double>() ?? 0.8)).ToList() ?? [],
+        FinalPrompt = V<string>(o, "finalPrompt"), FinalNegative = V<string>(o, "finalNegative"), Parent = V<string>(o, "parent"),
     };
 }
 
@@ -73,6 +137,10 @@ public sealed class ImageEngineService : IAsyncDisposable
     private volatile bool _disposed;
 
     public ImageModelStore Store { get; }
+    /// <summary>LoRAs e checkpoints importados.</summary>
+    public ImageLibrary Library { get; } = new();
+    /// <summary>Imagens enviadas pelo celular (origem de edições, máscaras, referências) — o host liga no BlobStore.</summary>
+    public Func<string, byte[]?> BlobGet { get; set; } = _ => null;
     public ImageRuntime Runtime { get; } = new();
     public ImageOutputs Outputs { get; } = new();
 
@@ -106,6 +174,7 @@ public sealed class ImageEngineService : IAsyncDisposable
             settings.Save();
         }
         ImagePaths.Root = settings.ImageEngineRoot;
+        ImageCatalog.ReloadCustom(); // registro de importados é por pasta de dados
         Store = new ImageModelStore();
         Store.Changed += () => Changed?.Invoke();
         Store.Activity += (t, k) => Activity?.Invoke(t, k);
@@ -124,29 +193,54 @@ public sealed class ImageEngineService : IAsyncDisposable
 
     // ------------------------------------------------------------------ escolha do modelo
 
-    /// <summary>Resolve "fast" | "quality" | "auto" para um modelo instalado (ou explica por que não dá).</summary>
-    public (ImageModelDef? Model, string? Note, string? Error) Choose(string choice, string quality, string prompt, long pixels)
+    /// <summary>Modelo pronto para rodar: instalado e com os pacotes de que depende (ex.: configs do SDXL).</summary>
+    public bool Ready(ImageModelDef m) =>
+        Store.IsInstalled(m) && m.Requires.All(r => ImageCatalog.Find(r) is { } d && Store.IsInstalled(d));
+
+    /// <summary>
+    /// Resolve "fast" | "quality" | "auto" | "model:&lt;id&gt;" para um modelo pronto (ou explica por que não dá).
+    /// No automático, LoRAs escolhidos e a imagem de origem (edição) pesam na escolha.
+    /// </summary>
+    public (ImageModelDef? Model, string? Note, string? Error) Choose(string choice, string quality, string prompt, long pixels,
+        string? loraFamily = null, string? sourceModel = null)
     {
+        if (choice.StartsWith("model:", StringComparison.Ordinal))
+        {
+            var m = ImageCatalog.Find(choice[6..]);
+            if (m is null || m.IsAux) return (null, null, "model_unknown");
+            if (!Ready(m)) return (null, null, (m.Gated && !Store.IsInstalled(m) ? "flux_unavailable:" : "model_not_installed:") + m.Id);
+            return pixels > m.Defaults.MaxPixels ? (null, null, "too_large") : (m, null, null);
+        }
         var z = ImageCatalog.ZImageTurbo;
         var f = ImageCatalog.FluxDev;
-        bool Ok(ImageModelDef m) => Store.IsInstalled(m);
         switch (choice)
         {
             case "fast":
-                return Ok(z) ? (z, null, null) : (null, null, "model_not_installed:" + z.Id);
+                return Ready(z) ? (z, null, null) : (null, null, "model_not_installed:" + z.Id);
             case "quality":
-                if (Ok(f)) return pixels > f.Defaults.MaxPixels ? (null, null, "too_large") : (f, null, null);
+                if (Ready(f)) return pixels > f.Defaults.MaxPixels ? (null, null, "too_large") : (f, null, null);
                 return (null, null, (f.Gated ? "flux_unavailable:" : "model_not_installed:") + f.Id);
             default:
-                // automático: o Z-Image é o padrão (mais rápido, ótimo em fotorrealismo e em texto dentro da imagem);
-                // o FLUX entra quando a qualidade alta foi pedida, cabe na resolução e não há texto a desenhar
-                var wantsText = prompt.Contains('"') || prompt.Contains('“') || Regex.IsMatch(prompt, @"\b(escrit[oa]|texto|letreiro|placa|logo|t[íi]tulo)\b", RegexOptions.IgnoreCase);
-                if (quality == "high" && Ok(f) && pixels <= f.Defaults.MaxPixels && !wantsText)
-                    return (f, "Qualidade alta pedida: FLUX.1 Dev", null);
-                if (Ok(z)) return (z, wantsText ? "Texto na imagem: Z-Image Turbo desenha letras melhor" : "Z-Image Turbo: rápido e com ótima qualidade", null);
-                if (Ok(f) && pixels <= f.Defaults.MaxPixels) return (f, "Único motor instalado: FLUX.1 Dev", null);
-                return (null, null, "model_not_installed:" + z.Id);
+                var r = ImageRouter.Choose(prompt, quality, pixels, Ready, loraFamily, sourceModel);
+                return (r.Model, r.Note, r.Error);
         }
+    }
+
+    /// <summary>Pacotes auxiliares que a operação usa (ControlNet, IP-Adapter, detectores, ampliação).</summary>
+    public static List<ImageModelDef> AuxFor(ImageRequest req, ImageModelDef def)
+    {
+        var need = new List<ImageModelDef>();
+        if (def.Engine == "sdxl") need.Add(ImageCatalog.SdxlConfig);
+        if (req.ControlType is { } ct)
+        {
+            need.Add(ImageCatalog.ControlNetUnion);
+            if (ct == "pose") { need.Add(ImageCatalog.VitPose); need.Add(ImageCatalog.RtDetr); }
+            if (ct == "depth") need.Add(ImageCatalog.DepthAnything);
+        }
+        if (req.Reference is not null) need.Add(ImageCatalog.IpAdapter);
+        if (req.Detail is { Length: > 0 } || req.Op == "detail") need.Add(ImageCatalog.GroundingDino);
+        if (req.Upscale > 0 || req.Hd || req.Op is "upscale" or "hd") need.Add(ImageCatalog.RealEsrgan);
+        return need.Distinct().ToList();
     }
 
     // ------------------------------------------------------------------ execução de uma tarefa
@@ -174,6 +268,56 @@ public sealed class ImageEngineService : IAsyncDisposable
         }
     }
 
+    /// <summary>Entradas da tarefa (origem, máscara, controle, referência) como arquivos que o worker lê; os temporários somem no fim.</summary>
+    private sealed class Inputs : IDisposable
+    {
+        public string? Source, Mask, Control, Reference;
+        public readonly List<string> Temp = [];
+        public void Dispose()
+        {
+            foreach (var t in Temp) try { File.Delete(t); } catch (Exception) { }
+        }
+    }
+
+    private string? ResolveInput(string? r, string job, string name, Inputs inputs)
+    {
+        if (string.IsNullOrEmpty(r)) return null;
+        if (r.StartsWith("img:", StringComparison.Ordinal))
+        {
+            var b = Outputs.BaseOf(r[4..]) ?? throw new JobFailure("source_missing", "A imagem de origem não está mais no PC.");
+            return b + ".png";
+        }
+        if (r.StartsWith("blob:", StringComparison.Ordinal))
+        {
+            var bytes = BlobGet(r[5..]) ?? throw new JobFailure("source_missing", "A imagem enviada expirou no PC. Envie de novo.");
+            Directory.CreateDirectory(ImagePaths.Tmp);
+            var path = Path.Combine(ImagePaths.Tmp, $"{job}-{name}.img");
+            File.WriteAllBytes(path, bytes);
+            inputs.Temp.Add(path);
+            return path;
+        }
+        throw new JobFailure("bad_request", "Referência de imagem inválida.");
+    }
+
+    /// <summary>Modelo que gerou uma imagem do PC (para editar no mesmo modelo).</summary>
+    public string? ModelOfImage(string? r) =>
+        r is not null && r.StartsWith("img:", StringComparison.Ordinal) ? Outputs.ReadMeta(r[4..])?["model"]?.GetValue<string>() : null;
+
+    /// <summary>LoRAs pedidos → entradas da biblioteca, conferindo compatibilidade (arquitetura errada = erro claro).</summary>
+    private List<(LoraEntry Entry, double Weight)> ResolveLoras(ImageRequest req, ImageModelDef def)
+    {
+        var res = new List<(LoraEntry, double)>();
+        foreach (var u in req.Loras)
+        {
+            var e = Library.Find(u.Id) ?? throw new JobFailure("lora_missing", "Um dos LoRAs escolhidos não está mais na biblioteca do PC.");
+            if (!File.Exists(e.File)) throw new JobFailure("lora_missing", $"O arquivo do LoRA \"{e.Name}\" sumiu do PC.");
+            var (ok, warn) = ImageLibrary.Compatible(e, def);
+            if (!ok) throw new JobFailure("lora_incompatible", $"\"{e.Name}\": {warn}");
+            res.Add((e, u.Weight));
+        }
+        return res;
+    }
+
     /// <summary>
     /// Roda uma tarefa de imagem do começo ao fim. <paramref name="publish"/> recebe os eventos para o celular
     /// (fase, passo, prévia, imagem pronta). Devolve o "end" da tarefa. Erros previsíveis viram JobFailure com texto útil.
@@ -183,6 +327,12 @@ public sealed class ImageEngineService : IAsyncDisposable
         var def = ImageCatalog.Find(req.Model) ?? throw new JobFailure("model_unknown", "Este modelo de imagem não existe neste Companion.");
         if (!Store.IsInstalled(def))
             throw new JobFailure("model_not_installed", $"O {def.Name} ainda não está instalado no PC. Instale em Modelos de imagem.");
+        foreach (var a in AuxFor(req, def))
+            if (!Store.IsInstalled(a))
+            {
+                if (!Store.Busy(a)) QueueInstall(a);
+                throw new JobFailure("aux_missing", $"O componente \"{a.Name}\" ainda está sendo instalado no PC. Tente de novo em alguns minutos.");
+            }
         var wall = Stopwatch.StartNew();
         await _gate.WaitAsync(ct);
         _sink = publish;
@@ -190,6 +340,7 @@ public sealed class ImageEngineService : IAsyncDisposable
         // já carregado no modo econômico (VRAM estava apertada): continua nele em vez de recarregar tudo
         var lowVram = WorkerAlive && Loaded == def && LoadedTransformer != def.Defaults.Transformer;
         long loadMs = 0;
+        using var inputs = new Inputs();
         try
         {
             // 1. ambiente (uma vez por PC)
@@ -204,13 +355,22 @@ public sealed class ImageEngineService : IAsyncDisposable
                 finally { Runtime.Changed -= OnRt; }
             }
 
-            // 1b. cópias de carga rápida (uma vez por modelo, num processo à parte)
-            if (!IsOptimized(def, false)) await OptimizeAsync(def, false, phase, ct);
+            // 1b. cópias de carga rápida (Z-Image/FLUX; uma vez por modelo, num processo à parte)
+            if (def.Engine != "sdxl" && !req.PlainUpscale && !IsOptimized(def, false)) await OptimizeAsync(def, false, phase, ct);
 
-            // 2. prompt: tradução (os modelos entendem melhor inglês) e melhoria opcional
+            // 1c. entradas
+            inputs.Source = ResolveInput(req.Source, job.Id, "src", inputs);
+            inputs.Mask = ResolveInput(req.Mask, job.Id, "mask", inputs);
+            inputs.Control = ResolveInput(req.ControlSource, job.Id, "ctl", inputs) ?? (req.ControlType is not null ? inputs.Source : null);
+            inputs.Reference = ResolveInput(req.Reference, job.Id, "ref", inputs);
+            if (req.IsEdit && inputs.Source is null) throw new JobFailure("bad_request", "Falta a imagem a editar.");
+            if (req.ControlType is not null && inputs.Control is null) throw new JobFailure("bad_request", "Falta a imagem de referência para a pose/estrutura.");
+
+            // 2. prompt: LoRAs, compilação por modelo (tradução, tags, score tags) — ou exatamente o de antes, ao recriar
+            var loras = ResolveLoras(req, def);
             var prompt = req.Prompt.Trim();
-            string? rewriteMode = req.Enhance ? "enhance" : !def.Defaults.NativePortuguese && !LooksEnglish(prompt) ? "translate" : null;
-            string finalPrompt = prompt;
+            string? rewriteMode = req.FinalPrompt is not null || req.PlainUpscale ? null : PromptCompiler.RewriteMode(def, prompt, req.Enhance, req.Raw);
+            string? body = null;
             string? rewriteNote = null;
 
             for (var attempt = 0; ; attempt++)
@@ -219,33 +379,44 @@ public sealed class ImageEngineService : IAsyncDisposable
                 {
                     // 3. VRAM: abre espaço (ou escolhe o modo econômico) e liga o worker
                     var mode = Mode(def, lowVram);
-                    if (!(WorkerAlive && Loaded == def && LoadedTransformer == mode.Transformer && LoadedTextEncoder == mode.TextEncoder))
+                    var keepRewriter = def.Engine == "sdxl" && rewriteMode is not null && !lowVram;
+                    var extra = ExtraGiB(req, keepRewriter);
+                    if (!req.PlainUpscale && !(WorkerAlive && Loaded == def && LoadedTransformer == mode.Transformer && LoadedTextEncoder == mode.TextEncoder))
                     {
-                        lowVram = await MakeRoomAsync(def, lowVram, phase, ct);
+                        lowVram = await MakeRoomAsync(def, lowVram, phase, ct, extra);
                         mode = Mode(def, lowVram);
                     }
-                    if (lowVram && !IsOptimized(def, true))
+                    if (lowVram && def.Defaults.HasLowVram && !IsOptimized(def, true))
                     {
                         if (WorkerAlive) await ShutdownWorkerAsync("optimize");
                         await OptimizeAsync(def, true, phase, ct);
                     }
                     await EnsureWorkerAsync(phase, ct);
 
-                    // FLUX: reescreve antes de carregar (o Qwen do Z-Image sobe sozinho e sai; pico de VRAM menor)
-                    if (rewriteMode is not null && finalPrompt == prompt && def.Engine != "zimage")
-                        (finalPrompt, rewriteNote) = await RewriteAsync(prompt, rewriteMode, phase, ct);
+                    // FLUX/SDXL: reescreve antes de carregar (o Qwen do Z-Image sobe sozinho; no SDXL pode ficar residente)
+                    if (rewriteMode is not null && body is null && def.Engine != "zimage")
+                        (body, rewriteNote) = await RewriteAsync(prompt, rewriteMode, phase, ct, keepRewriter && def.Engine == "sdxl");
 
-                    // 4. carrega o modelo
-                    var loadSw = Stopwatch.StartNew();
-                    await LoadAsync(def, mode, phase, ct);
-                    loadMs += loadSw.ElapsedMilliseconds;
+                    // 4. carrega o modelo (ampliação simples não precisa de nenhum)
+                    if (!req.PlainUpscale)
+                    {
+                        var loadSw = Stopwatch.StartNew();
+                        await LoadAsync(def, mode, phase, ct);
+                        loadMs += loadSw.ElapsedMilliseconds;
+                    }
 
                     // Z-Image: reescreve com o Qwen que já está carregado como codificador de texto
-                    if (rewriteMode is not null && finalPrompt == prompt && def.Engine == "zimage")
-                        (finalPrompt, rewriteNote) = await RewriteAsync(prompt, rewriteMode, phase, ct);
+                    if (rewriteMode is not null && body is null && def.Engine == "zimage")
+                        (body, rewriteNote) = await RewriteAsync(prompt, rewriteMode, phase, ct, false);
+
+                    var compiled = req.FinalPrompt is not null
+                        ? new CompiledPrompt(prompt, req.FinalPrompt, req.FinalNegative ?? "", "recreate", null, null, [])
+                        : PromptCompiler.Compile(def, prompt, body, rewriteMode, req.Raw, req.Negative, loras.Select(l => l.Entry));
 
                     // 5. gera
-                    return await GenerateAsync(job, req, def, prompt, finalPrompt, rewriteMode, rewriteNote, loadMs, wall, phase, publish, ct);
+                    var end = await GenerateAsync(job, req, def, compiled, rewriteNote, loras, inputs, loadMs, wall, phase, publish, ct);
+                    Library.MarkUsed(loras.Select(l => l.Entry.Id));
+                    return end;
                 }
                 catch (WorkerException e) when (e.Code == "oom" && attempt == 0 && !ct.IsCancellationRequested)
                 {
@@ -266,7 +437,7 @@ public sealed class ImageEngineService : IAsyncDisposable
         catch (WorkerException e)
         {
             LastError = e.Code;
-            throw new JobFailure(e.Code, WorkerMessage(e.Code, def));
+            throw new JobFailure(e.Code, WorkerMessage(e.Code, def, e.Message));
         }
         finally
         {
@@ -286,14 +457,27 @@ public sealed class ImageEngineService : IAsyncDisposable
     private sealed record EngineMode(string Transformer, string TextEncoder);
 
     private static EngineMode Mode(ImageModelDef def, bool lowVram) =>
-        lowVram ? new EngineMode("fp8", def.Engine == "flux" ? "swap" : "fp8") : new EngineMode(def.Defaults.Transformer, def.Defaults.TextEncoder);
+        def.Engine == "sdxl" ? new EngineMode("bf16", "gpu")
+        : lowVram ? new EngineMode("fp8", def.Engine == "flux" ? "swap" : "fp8") : new EngineMode(def.Defaults.Transformer, def.Defaults.TextEncoder);
 
     /// <summary>VRAM (GiB) que o modelo precisa no modo escolhido: residente + pico de uma geração + margem.</summary>
-    private static double NeedGiB(ImageModelDef def, bool lowVram)
+    private static double NeedGiB(ImageModelDef def, bool lowVram, double extra = 0)
     {
         var d = def.Defaults;
-        var resident = lowVram && d.Transformer == "bf16" ? d.ResidentGiB - d.TransformerGiB / 2 : d.ResidentGiB;
-        return resident + d.PeakExtraGiB + 0.5;
+        var resident = lowVram && d.Transformer == "bf16" && d.HasLowVram ? d.ResidentGiB - d.TransformerGiB / 2 : d.ResidentGiB;
+        return resident + d.PeakExtraGiB + 0.5 + (lowVram ? 0 : extra);
+    }
+
+    /// <summary>VRAM medida dos componentes extras de uma operação (ControlNet, IP-Adapter, detector, Qwen residente).</summary>
+    private static double ExtraGiB(ImageRequest req, bool keepRewriter)
+    {
+        var x = 0.0;
+        if (req.ControlType is not null || req.Hd) x += 2.6;
+        if (req.Reference is not null) x += 2.0;
+        if (req.Detail is { Length: > 0 } || req.Op == "detail") x += 0.8;
+        if (keepRewriter) x += 4.6;
+        if (req.Hd || req.Upscale > 0) x += 0.6;
+        return x;
     }
 
     /// <summary>
@@ -301,7 +485,7 @@ public sealed class ImageEngineService : IAsyncDisposable
     /// Se outros programas ocupam a VRAM, passa para o modo econômico; se nem assim couber, explica.
     /// Devolve se o modo econômico foi necessário.
     /// </summary>
-    private async Task<bool> MakeRoomAsync(ImageModelDef def, bool lowVram, Action<string, JsonObject?> phase, CancellationToken ct)
+    private async Task<bool> MakeRoomAsync(ImageModelDef def, bool lowVram, Action<string, JsonObject?> phase, CancellationToken ct, double extra = 0)
     {
         // um modelo de conversa está carregando agora (ex.: a devolução depois da última imagem):
         // espera terminar para medir a VRAM de verdade, senão os dois acabam juntos na GPU
@@ -318,7 +502,7 @@ public sealed class ImageEngineService : IAsyncDisposable
         if (total <= 0) return lowVram; // sem leitura da GPU: segue e deixa a recuperação de OOM agir
         var reserve = Math.Max(0, _settings.ImageVramReserveGiB);
         var free = total - used - reserve;
-        var need = NeedGiB(def, lowVram);
+        var need = NeedGiB(def, lowVram, extra);
         var loadedLlms = _models.Last.Models.Where(m => m.Loaded && m.Type == "llm").ToList();
         if (free < need && loadedLlms.Count > 0)
         {
@@ -337,6 +521,8 @@ public sealed class ImageEngineService : IAsyncDisposable
         if (free >= need) return lowVram;
         if (!lowVram && free >= NeedGiB(def, true))
         {
+            if (!def.Defaults.HasLowVram) Trace?.Invoke($"VRAM apertada ({free:0.0} GiB livres): {def.Id} sem componentes residentes extras");
+            else
             Trace?.Invoke($"VRAM apertada ({free:0.0} GiB livres): {def.Id} no modo econômico");
             return true;
         }
@@ -402,18 +588,32 @@ public sealed class ImageEngineService : IAsyncDisposable
         if (Loaded == def && LoadedTransformer == mode.Transformer && LoadedTextEncoder == mode.TextEncoder) return;
         State = EngineState.Loading;
         Changed?.Invoke();
-        var dir = Store.InstalledDir(def)!;
-        var rev = Store.InstalledRevision(def)!;
         phase("loading", new JsonObject { ["name"] = def.Name, ["expectedSeconds"] = Store.LoadSeconds(def), ["stage"] = "model" });
         var sw = Stopwatch.StartNew();
         JsonObject r;
-        try
+        JsonObject cmd;
+        if (def.Engine == "sdxl")
         {
-            r = await _worker!.RequestAsync(new JsonObject
+            cmd = new JsonObject
+            {
+                ["cmd"] = "load", ["engine"] = "sdxl", ["path"] = Store.CheckpointPath(def) ?? throw new JobFailure("model_missing", $"O arquivo do {def.Name} sumiu do PC."),
+                ["config"] = Store.InstalledDir(ImageCatalog.SdxlConfig) ?? throw new JobFailure("aux_missing", "A configuração do SDXL ainda não foi instalada."),
+                ["dtype"] = "bf16",
+            };
+        }
+        else
+        {
+            var dir = Store.InstalledDir(def)!;
+            var rev = Store.InstalledRevision(def)!;
+            cmd = new JsonObject
             {
                 ["cmd"] = "load", ["engine"] = def.Engine, ["path"] = dir, ["cache"] = ImagePaths.CacheDir(def, rev),
                 ["transformer"] = mode.Transformer, ["text_encoder"] = mode.TextEncoder,
-            }, ct, TimeSpan.FromMinutes(30));
+            };
+        }
+        try
+        {
+            r = await _worker!.RequestAsync(cmd, ct, TimeSpan.FromMinutes(30));
         }
         catch (OperationCanceledException)
         {
@@ -442,6 +642,7 @@ public sealed class ImageEngineService : IAsyncDisposable
     /// <summary>As cópias de carga rápida deste modelo (no modo normal ou econômico) já existem?</summary>
     public bool IsOptimized(ImageModelDef def, bool lowVram)
     {
+        if (def.Engine == "sdxl") return Store.IsInstalled(def); // arquivo único já é o formato de carga
         var rev = Store.InstalledRevision(def);
         if (rev is null) return false;
         var c = ImagePaths.CacheDir(def, rev);
@@ -507,7 +708,7 @@ public sealed class ImageEngineService : IAsyncDisposable
         try
         {
             await Runtime.EnsureAsync(CancellationToken.None);
-            if (IsOptimized(def, false)) return;
+            if (def.IsAux || def.Engine == "sdxl" || IsOptimized(def, false)) return;
             await _gate.WaitAsync();
             try
             {
@@ -518,26 +719,82 @@ public sealed class ImageEngineService : IAsyncDisposable
         catch (Exception e) { Trace?.Invoke($"preparação de {def.Id} depois da instalação falhou: {e.GetType().Name} {e.Message}"); }
     });
 
+    // ------------------------------------------------------------------ instalação automática (um por vez)
+
+    private readonly List<ImageModelDef> _installQueue = [];
+    private bool _installLoop;
+
+    /// <summary>Põe na fila de instalação (um modelo por vez: não disputa banda nem disco com os outros).</summary>
+    public void QueueInstall(ImageModelDef m)
+    {
+        lock (_installQueue)
+        {
+            if (Store.IsInstalled(m) || _installQueue.Contains(m)) return;
+            _installQueue.Add(m);
+            _installQueue.Sort((x, y) => (x.AutoInstallOrder == 0 ? 999 : x.AutoInstallOrder).CompareTo(y.AutoInstallOrder == 0 ? 999 : y.AutoInstallOrder));
+            if (_installLoop) return;
+            _installLoop = true;
+        }
+        _ = Task.Run(InstallLoopAsync);
+    }
+
+    /// <summary>Modelos esperando a vez de instalar (para a tela).</summary>
+    public string[] InstallQueue { get { lock (_installQueue) return _installQueue.Select(m => m.Id).ToArray(); } }
+
+    private async Task InstallLoopAsync()
+    {
+        while (!_disposed)
+        {
+            ImageModelDef? next;
+            lock (_installQueue)
+            {
+                next = _installQueue.FirstOrDefault();
+                if (next is null) { _installLoop = false; return; }
+            }
+            try
+            {
+                // dependências primeiro (as configs do SDXL são pequenas e o modelo não roda sem elas)
+                foreach (var dep in next.Requires.Select(ImageCatalog.Find).OfType<ImageModelDef>().Where(d => !Store.IsInstalled(d)))
+                {
+                    Store.StartInstall(dep);
+                    await Store.WaitIdleAsync(dep, CancellationToken.None);
+                }
+                if (!Store.IsInstalled(next))
+                {
+                    Store.StartInstall(next);
+                    await Task.Delay(300);
+                    await Store.WaitIdleAsync(next, CancellationToken.None);
+                }
+                if (Store.IsInstalled(next)) Store.MarkAutoInstall(next);
+            }
+            catch (Exception e) { Trace?.Invoke($"fila de instalação: {next.Id} falhou: {e.GetType().Name} {e.Message}"); }
+            lock (_installQueue) _installQueue.Remove(next);
+            Changed?.Invoke();
+        }
+    }
+
     /// <summary>
-    /// Primeira vez (e a cada partida): continua instalações interrompidas e instala sozinho o Z-Image Turbo,
-    /// o motor padrão. O FLUX.1 Dev só entra quando há conta do Hugging Face com os termos aceitos.
+    /// Primeira vez (e a cada partida): continua instalações interrompidas e instala sozinho, um por vez, o motor padrão
+    /// (Z-Image), os especialistas SDXL e os componentes de edição. O FLUX.1 Dev só entra quando há conta do Hugging Face
+    /// com os termos aceitos. Algo que o usuário removeu não volta sozinho.
     /// </summary>
     public void AutoSetup()
     {
         if (!Enabled) return;
         Store.ResumePending();
-        foreach (var m in ImageCatalog.All)
+        foreach (var m in ImageCatalog.BuiltIn.Where(x => x.AutoInstallOrder > 0).OrderBy(x => x.AutoInstallOrder))
         {
-            if (Store.IsInstalled(m)) { if (!IsOptimized(m, false)) AfterInstall(m); continue; }
+            if (Store.IsInstalled(m)) { if (!m.IsAux && m.Engine != "sdxl" && !IsOptimized(m, false)) AfterInstall(m); continue; }
             if (m.Gated && HfToken.Load() is null) continue;
-            if (Store.Busy(m) || !Store.MarkAutoInstall(m)) continue;
-            Store.StartInstall(m);
+            // marcado só depois de instalar: uma falha no meio não impede de tentar de novo na próxima partida
+            if (Store.Busy(m) || Store.WasAutoInstalled(m)) continue;
+            QueueInstall(m);
         }
         _ = Task.Run(async () =>
         {
             try { await Runtime.EnsureAsync(CancellationToken.None); } catch (Exception) { }
             // aviso de atualização (no máximo um por dia; nunca baixa sozinho)
-            foreach (var m in ImageCatalog.All.Where(Store.IsInstalled))
+            foreach (var m in ImageCatalog.BuiltIn.Where(Store.IsInstalled))
                 if (Store.CheckedAt(m) is not { } at || DateTimeOffset.Now - at > TimeSpan.FromDays(1))
                     await Store.CheckUpdateAsync(m, CancellationToken.None);
         });
@@ -546,7 +803,7 @@ public sealed class ImageEngineService : IAsyncDisposable
     private static WorkerException WorkerError(JsonObject r) =>
         new(r["code"]?.GetValue<string>() ?? "pipeline_error", r["message"]?.GetValue<string>() ?? "falha");
 
-    private async Task<(string Prompt, string? Note)> RewriteAsync(string prompt, string mode, Action<string, JsonObject?> phase, CancellationToken ct)
+    private async Task<(string Prompt, string? Note)> RewriteAsync(string prompt, string mode, Action<string, JsonObject?> phase, CancellationToken ct, bool keep = false)
     {
         var key = mode + "\u0001" + prompt;
         lock (_rewriteCache) if (_rewriteCache.TryGetValue(key, out var hit)) return (hit, null);
@@ -564,6 +821,7 @@ public sealed class ImageEngineService : IAsyncDisposable
                 {
                     ["cmd"] = "rewrite", ["text"] = prompt, ["mode"] = mode,
                     ["path"] = Path.Combine(zdir, "text_encoder"), ["tokenizer"] = Path.Combine(zdir, "tokenizer"),
+                    ["cache"] = Store.InstalledRevision(z) is { } zr ? ImagePaths.CacheDir(z, zr) : null, ["keep"] = keep,
                 }, ct, TimeSpan.FromMinutes(3));
                 if (r["ev"]?.GetValue<string>() == "rewritten") result = r["text"]?.GetValue<string>();
                 else Trace?.Invoke($"reescrita do prompt falhou no worker: {r["code"]}");
@@ -571,6 +829,7 @@ public sealed class ImageEngineService : IAsyncDisposable
             catch (WorkerException e) when (e.Code != "worker_crash") { Trace?.Invoke($"reescrita do prompt falhou: {e.Code}"); }
         }
         if (string.IsNullOrWhiteSpace(result)) result = await RewriteWithLmStudioAsync(prompt, mode, ct);
+        if (mode is "tags" or "pony" && result is not null) result = string.Join(", ", result.Split(['\n', ','], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Select(t => t.Trim('-', '*', ' ')));
         if (string.IsNullOrWhiteSpace(result) || result.Length > 2000)
         {
             note = "O prompt foi usado como você escreveu (a tradução não estava disponível).";
@@ -592,9 +851,13 @@ public sealed class ImageEngineService : IAsyncDisposable
         if (loaded is null) return null;
         try
         {
-            var sys = mode == "enhance"
-                ? "Rewrite the user's image request as a detailed English prompt for an image generator (composition, lighting, camera, materials). Keep every requested element; add no people or personal traits that were not requested; keep quoted text as written. Output only the prompt."
-                : "Translate the user's image request into an English prompt for an image generator. Keep every detail; remove phrases like 'create an image of'; keep quoted text as written. Output only the prompt.";
+            var sys = mode switch
+            {
+                "enhance" => "Rewrite the user's image request as a detailed English prompt for an image generator (composition, lighting, camera, materials). Keep every requested element; add no people or personal traits that were not requested; keep quoted text as written. Output only the prompt.",
+                "tags" => "Convert the user's image request into comma-separated English Danbooru-style tags (lowercase, spaces instead of underscores): subject count tags only if people are requested, then appearance, clothing, pose, setting, lighting and style. Invent nothing that was not requested. No quality or rating tags. Output only the tags.",
+                "pony" => "Turn the user's image request into one line: a short English sentence describing the scene, a comma, then comma-separated lowercase Danbooru-style tags for the key details. Invent nothing that was not requested. No score, rating or quality tags. Output only that line.",
+                _ => "Translate the user's image request into an English prompt for an image generator. Keep every detail; remove phrases like 'create an image of'; keep quoted text as written. Output only the prompt.",
+            };
             var req = new JsonObject
             {
                 ["model"] = loaded.Instances[0].Id,
@@ -614,8 +877,56 @@ public sealed class ImageEngineService : IAsyncDisposable
         }
     }
 
-    private async Task<JsonObject> GenerateAsync(ChatJob job, ImageRequest req, ImageModelDef def, string original, string finalPrompt,
-        string? rewriteMode, string? rewriteNote, long loadMs, Stopwatch wall, Action<string, JsonObject?> phase, Action<JsonObject> publish, CancellationToken ct)
+    /// <summary>Operação do pedido → operação do worker + pós-processos (detail pass, ampliação, refino da Alta Definição).</summary>
+    private (string Op, JsonArray Post, List<string> Workflow) Plan(ImageRequest req, ImageModelDef def)
+    {
+        var post = new JsonArray();
+        var wf = new List<string>();
+        var op = req.Op switch
+        {
+            "img2img" => "img2img",
+            "inpaint" => "inpaint",
+            "outpaint" => "outpaint",
+            "upscale" or "detail" or "hd" => "post",
+            _ => "txt2img",
+        };
+        wf.Add(req.Op);
+        var detail = req.Detail is { Length: > 0 } d ? d : req.Op == "detail" ? ["face", "hand"] : null;
+        if (detail is not null)
+        {
+            post.Add(new JsonObject
+            {
+                ["kind"] = "detail", ["targets"] = new JsonArray(detail.Select(t => (JsonNode)t).ToArray()),
+                ["strength"] = def.Engine == "sdxl" ? 0.4 : 0.35, ["detector"] = Store.InstalledDir(ImageCatalog.GroundingDino),
+            });
+            if (req.Op != "detail") wf.Add("detail");
+        }
+        var factor = req.Hd || req.Op == "hd" ? Math.Max(2, req.Upscale) : req.Upscale > 0 ? req.Upscale : req.Op == "upscale" ? 2 : 0;
+        if (factor > 0)
+        {
+            var anime = def.Category is "anime" or "illustration";
+            var file = anime ? "RealESRGAN_x4plus_anime_6B.pth" : factor == 2 ? "RealESRGAN_x2plus.pth" : "RealESRGAN_x4plus.pth";
+            var up = new JsonObject
+            {
+                ["kind"] = "upscale", ["factor"] = factor, ["model"] = Path.Combine(Store.InstalledDir(ImageCatalog.RealEsrgan)!, file),
+                ["cache"] = Path.Combine(ImagePaths.Cache, "realesrgan"),
+            };
+            if (req.Hd || req.Op == "hd")
+            {
+                var refine = new JsonObject { ["strength"] = def.Engine == "sdxl" ? 0.3 : 0.28, ["steps"] = req.Steps, ["tile"] = 1024, ["overlap"] = 128 };
+                if (def.Engine == "sdxl" && Store.InstalledDir(ImageCatalog.ControlNetUnion) is { } cn)
+                    refine["cn"] = new JsonObject { ["dir"] = cn, ["weights"] = "diffusion_pytorch_model_promax.safetensors", ["config"] = "config_promax.json", ["scale"] = 0.5 };
+                up["refine"] = refine;
+            }
+            post.Add(up);
+            if (req.Op is not ("upscale" or "hd")) wf.Add(req.Hd ? "hd" : "upscale");
+        }
+        return (op, post, wf);
+    }
+
+    private async Task<JsonObject> GenerateAsync(ChatJob job, ImageRequest req, ImageModelDef def, CompiledPrompt prompt, string? rewriteNote,
+        List<(LoraEntry Entry, double Weight)> loras, Inputs inputs, long loadMs, Stopwatch wall, Action<string, JsonObject?> phase,
+        Action<JsonObject> publish, CancellationToken ct)
     {
         State = EngineState.Working;
         Changed?.Invoke();
@@ -625,16 +936,61 @@ public sealed class ImageEngineService : IAsyncDisposable
         while (first < req.Count && Outputs.BaseOf($"{job.Id}-{first}") is not null) first++;
         var images = new JsonArray();
         for (var i = 0; i < first; i++) images.Add(DescribeImage($"{job.Id}-{i}", Outputs.BaseOf($"{job.Id}-{i}")!, req.Seed + i));
-        phase("generating", new JsonObject { ["name"] = def.Name, ["count"] = req.Count, ["steps"] = req.Steps, ["image"] = first });
+        var (op, post, workflow) = Plan(req, def);
+        var p = def.Preset;
+        var sampler = req.Sampler ?? p.Sampler;
+        var schedule = req.Schedule ?? p.Schedule;
+        var clipSkip = req.ClipSkip ?? p.ClipSkip;
+        var rescale = req.GuidanceRescale ?? p.GuidanceRescale;
+        phase("generating", new JsonObject { ["name"] = def.Name, ["count"] = req.Count, ["steps"] = req.Steps, ["image"] = first, ["op"] = req.Op });
         JsonObject r;
+        var aux = new JsonArray();
         if (first < req.Count)
         {
             var cmd = new JsonObject
             {
-                ["cmd"] = "generate", ["id"] = job.Id, ["prompt"] = finalPrompt, ["width"] = req.Width, ["height"] = req.Height,
-                ["steps"] = req.Steps, ["guidance"] = req.Guidance, ["seed"] = req.Seed, ["count"] = req.Count, ["first"] = first,
-                ["out"] = outBase, ["preview"] = true, ["previewEvery"] = def.Engine == "flux" ? 3 : 2,
+                ["cmd"] = "generate", ["id"] = job.Id, ["prompt"] = prompt.Positive, ["negative"] = prompt.Negative, ["width"] = req.Width,
+                ["height"] = req.Height, ["steps"] = req.Steps, ["guidance"] = req.Guidance, ["seed"] = req.Seed, ["count"] = req.Count, ["first"] = first,
+                ["out"] = outBase, ["preview"] = true, ["previewEvery"] = def.Engine switch { "flux" => 3, "sdxl" => 3, _ => 2 },
+                ["op"] = op, ["sampler"] = sampler, ["schedule"] = schedule, ["prediction"] = p.Prediction, ["zsnr"] = p.ZeroSnr,
+                ["guidanceRescale"] = rescale, ["clipSkip"] = clipSkip, ["post"] = post,
+                ["loras"] = new JsonArray(loras.Select(l => (JsonNode)new JsonObject { ["path"] = l.Entry.File, ["weight"] = l.Weight, ["name"] = l.Entry.Name }).ToArray()),
             };
+            if (inputs.Source is not null) cmd["init"] = inputs.Source;
+            if (req.Strength is double st) cmd["strength"] = Math.Clamp(st, 0.05, 1.0);
+            else if (op == "img2img") cmd["strength"] = 0.55;
+            else if (op == "inpaint") cmd["strength"] = def.Engine == "sdxl" ? 0.99 : 1.0;
+            if (inputs.Mask is not null) cmd["mask"] = inputs.Mask;
+            if (req.Expand is { Length: 4 } ex) cmd["expand"] = new JsonObject { ["left"] = ex[0], ["top"] = ex[1], ["right"] = ex[2], ["bottom"] = ex[3] };
+            if (req.ControlType is { } ctype && def.Engine == "sdxl")
+            {
+                cmd["control"] = new JsonObject
+                {
+                    ["type"] = ctype, ["mode"] = ctype switch { "pose" => 0, "depth" => 1, "canny" => 3, "lineart" => 3, "tile" => 6, _ => 3 },
+                    ["image"] = inputs.Control, ["scale"] = Math.Clamp(req.ControlScale ?? (ctype == "pose" ? 0.9 : 0.7), 0.1, 1.5), ["preprocess"] = true,
+                    ["cn"] = new JsonObject
+                    {
+                        ["dir"] = Store.InstalledDir(ImageCatalog.ControlNetUnion), ["weights"] = "diffusion_pytorch_model_promax.safetensors", ["config"] = "config_promax.json",
+                    },
+                    ["aux"] = new JsonObject
+                    {
+                        ["detector"] = Store.InstalledDir(ImageCatalog.RtDetr), ["pose"] = Store.InstalledDir(ImageCatalog.VitPose),
+                        ["depth"] = Store.InstalledDir(ImageCatalog.DepthAnything),
+                    },
+                };
+            }
+            if (inputs.Reference is not null && def.Engine == "sdxl")
+            {
+                cmd["reference"] = new JsonObject
+                {
+                    ["image"] = inputs.Reference, ["scale"] = Math.Clamp(req.ReferenceScale ?? 0.5, 0.05, 1.2),
+                    ["ip"] = new JsonObject
+                    {
+                        ["dir"] = Store.InstalledDir(ImageCatalog.IpAdapter), ["weight"] = "ip-adapter-plus_sdxl_vit-h.safetensors",
+                        ["subfolder"] = "sdxl_models", ["encoder"] = "models/image_encoder",
+                    },
+                };
+            }
             // cada imagem pronta é registrada e anunciada na hora (o celular começa a baixar enquanto as outras são geradas)
             void OnImage(JsonObject e)
             {
@@ -643,7 +999,7 @@ public sealed class ImageEngineService : IAsyncDisposable
                 var id = $"{job.Id}-{idx}";
                 var b = $"{outBase}-{idx}";
                 Outputs.Register(id, b);
-                Outputs.SaveMeta(b, Meta(job, req, def, original, finalPrompt, rewriteMode, id, idx, e));
+                Outputs.SaveMeta(b, Meta(job, req, def, prompt, loras, workflow, sampler, schedule, clipSkip, rescale, id, idx, e, wall.ElapsedMilliseconds, loadMs));
                 publish(new JsonObject { ["imageReady"] = DescribeImage(id, b, e["seed"]!.GetValue<long>()) });
             }
             _worker!.Event += OnImage;
@@ -653,7 +1009,7 @@ public sealed class ImageEngineService : IAsyncDisposable
                 {
                     try { _worker?.Send(new JsonObject { ["cmd"] = "cancel", ["id"] = job.Id }); } catch (Exception) { }
                 });
-                var t = _worker.RequestAsync(cmd, CancellationToken.None, TimeSpan.FromMinutes(30));
+                var t = _worker.RequestAsync(cmd, CancellationToken.None, TimeSpan.FromMinutes(45));
                 // cancelado e o worker não parou em 10 s: encerra à força (a GPU tem de ser solta)
                 while (!t.IsCompleted)
                 {
@@ -680,31 +1036,47 @@ public sealed class ImageEngineService : IAsyncDisposable
                 var id = $"{job.Id}-{idx}";
                 images.Add(DescribeImage(id, Outputs.BaseOf(id) ?? $"{outBase}-{idx}", img["seed"]!.GetValue<long>()));
             }
+            if (r["aux"] is JsonArray ax)
+                foreach (var a in ax) if (a is not null) aux.Add(Path.GetFileName(a.GetValue<string>()));
         }
         else r = new JsonObject { ["stats"] = new JsonObject() };
         var stats = r["stats"] as JsonObject ?? new JsonObject();
         var end = new JsonObject
         {
-            ["reason"] = "stop", ["model"] = def.Id, ["name"] = def.Name, ["images"] = images,
-            ["prompt"] = new JsonObject { ["original"] = original, ["final"] = finalPrompt, ["mode"] = rewriteMode, ["note"] = rewriteNote ?? req.AutoNote },
+            ["reason"] = "stop", ["model"] = def.Id, ["name"] = def.Name, ["images"] = images, ["op"] = req.Op, ["parent"] = req.Parent,
+            ["prompt"] = new JsonObject
+            {
+                ["original"] = prompt.Original, ["final"] = prompt.Positive, ["negative"] = prompt.Negative, ["strategy"] = prompt.Strategy,
+                ["mode"] = prompt.RewriteMode, ["note"] = rewriteNote ?? req.AutoNote,
+                ["added"] = new JsonArray(prompt.Added.Select(a => (JsonNode)a).ToArray()),
+            },
+            ["loras"] = new JsonArray(loras.Select(l => (JsonNode)new JsonObject { ["id"] = l.Entry.Id, ["name"] = l.Entry.Name, ["weight"] = l.Weight }).ToArray()),
             ["stats"] = new JsonObject
             {
                 ["wallMs"] = wall.ElapsedMilliseconds, ["loadMs"] = loadMs, ["generateMs"] = stats["totalMs"]?.DeepClone(),
                 ["meanStepMs"] = stats["meanStepMs"]?.DeepClone(), ["peakVramMb"] = stats["peakReservedMb"]?.DeepClone(),
                 ["width"] = req.Width, ["height"] = req.Height, ["steps"] = req.Steps, ["guidance"] = req.Guidance, ["seed"] = req.Seed,
-                ["count"] = req.Count, ["transformer"] = LoadedTransformer, ["textEncoder"] = LoadedTextEncoder,
+                ["count"] = req.Count, ["transformer"] = LoadedTransformer, ["textEncoder"] = LoadedTextEncoder, ["sampler"] = def.Engine == "sdxl" ? sampler : null,
+                ["schedule"] = def.Engine == "sdxl" ? schedule : null,
                 ["queuedMs"] = (long)((job.StartedAt ?? DateTimeOffset.Now) - job.CreatedAt).TotalMilliseconds,
             },
         };
         Metrics(new JsonObject
         {
-            ["kind"] = "generate", ["model"] = def.Id, ["width"] = req.Width, ["height"] = req.Height, ["steps"] = req.Steps, ["count"] = req.Count,
+            ["kind"] = "generate", ["model"] = def.Id, ["op"] = req.Op, ["width"] = req.Width, ["height"] = req.Height, ["steps"] = req.Steps, ["count"] = req.Count,
             ["wallMs"] = wall.ElapsedMilliseconds, ["loadMs"] = loadMs, ["generateMs"] = stats["totalMs"]?.DeepClone(), ["encodeMs"] = stats["encodeMs"]?.DeepClone(),
             ["meanStepMs"] = stats["meanStepMs"]?.DeepClone(), ["peakAllocatedMb"] = stats["peakAllocatedMb"]?.DeepClone(),
             ["peakReservedMb"] = stats["peakReservedMb"]?.DeepClone(), ["freeMbAfter"] = r["mem"]?["freeMb"]?.DeepClone(), ["rssMb"] = r["rssMb"]?.DeepClone(),
-            ["transformer"] = LoadedTransformer, ["textEncoder"] = LoadedTextEncoder, ["rewrite"] = rewriteMode,
+            ["transformer"] = LoadedTransformer, ["textEncoder"] = LoadedTextEncoder, ["rewrite"] = prompt.RewriteMode, ["loras"] = loras.Count,
+            ["post"] = string.Join('+', workflow),
         });
-        Activity?.Invoke($"{(req.Count > 1 ? $"{req.Count} imagens geradas" : "Imagem gerada")} com {def.Name} em {wall.Elapsed.TotalSeconds:0.0} s", "task");
+        var what = req.Op switch
+        {
+            "upscale" => "Imagem ampliada", "hd" => "Imagem em alta definição", "detail" => "Detalhes refeitos", "inpaint" => "Edição pronta",
+            "outpaint" => "Imagem expandida", "img2img" => req.Count > 1 ? $"{req.Count} variações geradas" : "Variação gerada",
+            _ => req.Count > 1 ? $"{req.Count} imagens geradas" : "Imagem gerada",
+        };
+        Activity?.Invoke($"{what} com {def.Name} em {wall.Elapsed.TotalSeconds:0.0} s", "task");
         return end;
     }
 
@@ -729,12 +1101,34 @@ public sealed class ImageEngineService : IAsyncDisposable
         return ((b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19], (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23]);
     }
 
-    private static JsonObject Meta(ChatJob job, ImageRequest req, ImageModelDef def, string original, string finalPrompt, string? rewriteMode, string id, int idx, JsonObject e) => new()
+    /// <summary>
+    /// Metadata completa de cada imagem (cifrada com DPAPI ao lado do PNG): prompts original e final, negativo, modelo
+    /// (versão e hash), LoRAs (com hash e peso), seed, tamanho, sampler/scheduler, CFG/passos, operação e fluxo, datas e tempos.
+    /// É o que permite RECRIAR exatamente a mesma imagem e fazer variações.
+    /// </summary>
+    private JsonObject Meta(ChatJob job, ImageRequest req, ImageModelDef def, CompiledPrompt prompt, List<(LoraEntry Entry, double Weight)> loras,
+        List<string> workflow, string sampler, string schedule, int? clipSkip, double rescale, string id, int idx, JsonObject e, long wallMs, long loadMs) => new()
     {
-        ["id"] = id, ["job"] = job.Id, ["index"] = idx, ["createdAt"] = DateTimeOffset.Now.ToUnixTimeMilliseconds(), ["model"] = def.Id,
-        ["modelName"] = def.Name, ["prompt"] = original, ["finalPrompt"] = finalPrompt, ["rewrite"] = rewriteMode, ["width"] = e["width"]?.DeepClone(),
-        ["height"] = e["height"]?.DeepClone(), ["steps"] = req.Steps, ["guidance"] = req.Guidance, ["seed"] = e["seed"]?.DeepClone(),
-        ["format"] = req.Format, ["quality"] = req.Quality, ["ms"] = e["ms"]?.DeepClone(), ["device"] = job.DeviceId, ["meta"] = job.Meta?.DeepClone(),
+        ["v"] = 2, ["id"] = id, ["job"] = job.Id, ["index"] = idx, ["createdAt"] = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
+        ["model"] = def.Id, ["modelName"] = def.Name, ["modelVersion"] = def.Version, ["modelRevision"] = Store.InstalledRevision(def) ?? def.Revision,
+        ["modelSha256"] = def.Sha256, ["engine"] = def.Engine, ["family"] = def.Family,
+        ["prompt"] = prompt.Original, ["finalPrompt"] = prompt.Positive, ["negative"] = prompt.Negative, ["strategy"] = prompt.Strategy,
+        ["rewrite"] = prompt.RewriteMode, ["raw"] = req.Raw, ["userNegative"] = req.Negative, ["added"] = new JsonArray(prompt.Added.Select(a => (JsonNode)a).ToArray()),
+        ["loras"] = new JsonArray(loras.Select(l => (JsonNode)new JsonObject
+        {
+            ["id"] = l.Entry.Id, ["name"] = l.Entry.Name, ["weight"] = l.Weight, ["sha256"] = l.Entry.Sha256, ["family"] = l.Entry.Family,
+        }).ToArray()),
+        ["width"] = e["width"]?.DeepClone(), ["height"] = e["height"]?.DeepClone(), ["genWidth"] = req.Width, ["genHeight"] = req.Height,
+        ["steps"] = req.Steps, ["guidance"] = req.Guidance, ["seed"] = e["seed"]?.DeepClone(), ["baseSeed"] = req.Seed,
+        ["sampler"] = def.Engine == "sdxl" ? sampler : null, ["schedule"] = def.Engine == "sdxl" ? schedule : null,
+        ["clipSkip"] = clipSkip, ["guidanceRescale"] = def.Engine == "sdxl" ? rescale : null, ["prediction"] = def.Preset.Prediction,
+        ["format"] = req.Format, ["quality"] = req.Quality, ["choice"] = req.Choice, ["autoNote"] = req.AutoNote,
+        ["op"] = req.Op, ["workflow"] = new JsonArray(workflow.Select(w => (JsonNode)w).ToArray()), ["parent"] = req.Parent,
+        ["source"] = req.Source, ["strength"] = req.Strength, ["control"] = req.ControlType, ["controlScale"] = req.ControlScale,
+        ["referenceScale"] = req.Reference is null ? null : req.ReferenceScale ?? 0.5, ["upscale"] = e["upscale"]?.DeepClone(), ["hd"] = req.Hd,
+        ["detail"] = e["detail"]?.DeepClone(), ["expand"] = req.Expand is null ? null : new JsonArray(req.Expand.Select(x => (JsonNode)x).ToArray()),
+        ["ms"] = e["ms"]?.DeepClone(), ["wallMs"] = wallMs, ["loadMs"] = loadMs, ["device"] = job.DeviceId, ["meta"] = job.Meta?.DeepClone(),
+        ["noc"] = CompanionHost.Version,
     };
 
     private static void Metrics(JsonObject o)
@@ -883,8 +1277,10 @@ public sealed class ImageEngineService : IAsyncDisposable
         _ => "Não foi possível preparar o motor de imagem no PC.",
     };
 
-    public static string WorkerMessage(string code, ImageModelDef def) => code switch
+    public static string WorkerMessage(string code, ImageModelDef def, string? detail = null) => code switch
     {
+        // mensagens que o próprio worker já escreve para a pessoa (pose não encontrada, máscara vazia...)
+        "no_pose" or "lora_incompatible" or "lora_missing" or "bad_request" when !string.IsNullOrWhiteSpace(detail) && !detail.Contains("Error") => detail!,
         "oom" => "Não havia VRAM suficiente para esta configuração. Ajustamos os recursos e você pode tentar novamente.",
         "model_missing" => $"Os arquivos do {def.Name} estão incompletos no PC. Abra Modelos de imagem para reparar.",
         "cuda_unavailable" or "cuda_error" => "A GPU NVIDIA não respondeu ao motor de imagem (driver ou CUDA).",
@@ -909,8 +1305,32 @@ public sealed class ImageEngineService : IAsyncDisposable
             ["root"] = ImagePaths.HasRoot ? ImagePaths.Root : null,
             ["defaultChoice"] = "fast",
             ["hfUser"] = HfUser,
-            ["models"] = new JsonArray(ImageCatalog.All.Select(m => (JsonNode)Store.ToJson(m)).ToArray()),
+            ["models"] = new JsonArray(ImageCatalog.Models.Select(m => (JsonNode)ModelJson(m)).ToArray()),
+            ["aux"] = new JsonArray(ImageCatalog.AuxPackages.Select(m => (JsonNode)Store.ToJson(m)).ToArray()),
+            ["installQueue"] = new JsonArray(InstallQueue.Select(i => (JsonNode)i).ToArray()),
+            ["loraCount"] = Library.Loras.Count,
+            ["imports"] = Library.ImportsJson(),
         };
+    }
+
+    /// <summary>Um modelo para o celular: estado da instalação + o que ele sabe fazer + preset.</summary>
+    public JsonObject ModelJson(ImageModelDef m)
+    {
+        var o = Store.ToJson(m);
+        var d = m.Defaults;
+        o["ready"] = Ready(m);
+        o["caps"] = new JsonObject
+        {
+            ["img2img"] = m.Caps.Img2Img, ["inpaint"] = m.Caps.Inpaint, ["outpaint"] = m.Caps.Outpaint, ["loras"] = m.Caps.Loras,
+            ["controlnet"] = m.Caps.ControlNet, ["reference"] = m.Caps.Reference, ["negative"] = m.Caps.Negative,
+        };
+        o["steps"] = new JsonObject { ["min"] = d.StepsMin, ["max"] = d.StepsMax, ["presets"] = new JsonArray(d.Steps.Select(x => (JsonNode)x).ToArray()) };
+        o["guidance"] = d.GuidanceAdjustable ? new JsonObject { ["min"] = d.GuidanceMin, ["max"] = d.GuidanceMax, ["default"] = d.Guidance } : null;
+        o["maxPixels"] = d.MaxPixels;
+        o["preset"] = ImageCatalog.PresetJson(m);
+        o["vramGiB"] = Math.Round(d.ResidentGiB + d.PeakExtraGiB, 1);
+        o["loadSeconds"] = Store.LoadSeconds(m);
+        return o;
     }
 
     /// <summary>Conta do Hugging Face conectada (nome), se houver token.</summary>

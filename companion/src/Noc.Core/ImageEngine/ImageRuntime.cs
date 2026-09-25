@@ -45,7 +45,9 @@ public sealed class ImageRuntime
         return r.ReadToEnd();
     }
 
-    public static string WorkerSource => Embedded("noc_image_worker.py");
+    /// <summary>Os módulos do worker embutidos no Noc.exe (noc_image_worker.py e os que ele importa).</summary>
+    public static IEnumerable<string> WorkerModules =>
+        Assembly.GetExecutingAssembly().GetManifestResourceNames().Where(n => n.StartsWith("worker/", StringComparison.Ordinal) && n.EndsWith(".py", StringComparison.Ordinal));
     public static string Requirements => Embedded("noc_image_requirements.txt");
 
     /// <summary>Assinatura do ambiente esperado: muda quando o Noc traz outras versões de bibliotecas.</summary>
@@ -73,9 +75,13 @@ public sealed class ImageRuntime
     private static void SyncWorkerScript()
     {
         Directory.CreateDirectory(WorkerDir);
-        var src = WorkerSource;
-        if (!File.Exists(WorkerScript) || File.ReadAllText(WorkerScript) != src)
-            File.WriteAllText(WorkerScript, src, new UTF8Encoding(false));
+        foreach (var res in WorkerModules)
+        {
+            var path = Path.Combine(WorkerDir, res["worker/".Length..]);
+            var src = Embedded(res);
+            if (!File.Exists(path) || File.ReadAllText(path) != src)
+                File.WriteAllText(path, src, new UTF8Encoding(false));
+        }
     }
 
     /// <summary>Garante o ambiente (instala o que falta). Seguro chamar várias vezes.</summary>

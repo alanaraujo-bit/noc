@@ -512,7 +512,7 @@ public sealed class Session : IAsyncDisposable
                 return ImageCapabilities();
 
             case "image.prepare":
-                _host.Images.Prepare(p["engine"]?.GetValue<string>() ?? "fast");
+                _host.Images.Prepare(p["model"]?.GetValue<string>() is { Length: > 0 } pm ? "model:" + pm : p["engine"]?.GetValue<string>() ?? "fast");
                 return new JsonObject { ["ok"] = true };
 
             case "image.start":
@@ -536,7 +536,7 @@ public sealed class Session : IAsyncDisposable
                 {
                     ["job"] = job.Id, ["existing"] = existing, ["model"] = req.Model, ["name"] = ImageEngine.ImageCatalog.Find(req.Model)?.Name,
                     ["position"] = _host.Jobs.QueuePosition(job), ["width"] = req.Width, ["height"] = req.Height, ["steps"] = req.Steps,
-                    ["seed"] = req.Seed, ["count"] = req.Count, ["note"] = req.AutoNote,
+                    ["seed"] = req.Seed, ["count"] = req.Count, ["note"] = req.AutoNote, ["op"] = req.Op, ["guidance"] = req.Guidance,
                 };
             }
 
@@ -576,7 +576,8 @@ public sealed class Session : IAsyncDisposable
             case "image.install":
             {
                 var m = ImageEngine.ImageCatalog.Find(Str(p, "model")) ?? throw new RpcException("model_not_found", "Modelo de imagem desconhecido");
-                _host.Images.Store.StartInstall(m);
+                if (m.Local) throw new RpcException("bad_request", "Modelo importado: nada a instalar.");
+                _host.Images.QueueInstall(m);
                 _host.Security.Write(SecurityLevel.Info, "image.install", $"{DeviceName} pediu para instalar {m.Name}", DeviceId, Route);
                 return _host.Images.ToJson();
             }
@@ -608,6 +609,59 @@ public sealed class Session : IAsyncDisposable
                 var (ok, message) = await _host.SetHfTokenAsync(p["token"]?.GetValue<string>());
                 if (!ok) throw new RpcException("bad_token", message);
                 return new JsonObject { ["ok"] = true, ["message"] = message, ["status"] = _host.Images.ToJson() };
+            }
+
+            case "image.list":
+            {
+                // galeria do PC: metadados das imagens deste aparelho (filtros e busca ficam no celular)
+                var max = Math.Clamp(p["max"]?.GetValue<int>() ?? 200, 1, 2000);
+                var arr = new JsonArray();
+                foreach (var m in _host.Images.Outputs.ListMeta(DeviceId!, max)) arr.Add(m);
+                return new JsonObject { ["images"] = arr };
+            }
+
+            case "lora.list":
+            {
+                var model = p["model"]?.GetValue<string>() is { } mid ? ImageEngine.ImageCatalog.Find(mid) : null;
+                return new JsonObject
+                {
+                    ["loras"] = new JsonArray(_host.Images.Library.Loras.OrderByDescending(l => l.Favorite).ThenByDescending(l => l.LastUsed ?? l.AddedAt)
+                        .Select(l => (JsonNode)LoraJson(l, model)).ToArray()),
+                    ["imports"] = _host.Images.Library.ImportsJson(),
+                };
+            }
+
+            case "lora.update":
+            {
+                if (!_host.Images.Library.Update(Str(p, "id"), p)) throw new RpcException("lora_missing", "LoRA não encontrado.");
+                return LoraJson(_host.Images.Library.Find(Str(p, "id"))!, null);
+            }
+
+            case "lora.delete":
+                _host.Security.Write(SecurityLevel.Info, "lora.delete", $"{DeviceName} removeu um LoRA", DeviceId, Route);
+                return new JsonObject { ["ok"] = _host.Images.Library.Delete(Str(p, "id")) };
+
+            case "image.import":
+            {
+                // link do Civitai / Hugging Face: o PC baixa, confere o hash e organiza (LoRA ou checkpoint)
+                var url = Str(p, "url").Trim();
+                if (url.Length > 1000 || !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) throw new RpcException("bad_url", "Use um link https.");
+                var key = _host.Images.Library.StartImportUrl(url);
+                _host.Security.Write(SecurityLevel.Info, "image.import", $"{DeviceName} pediu para importar um modelo por link", DeviceId, Route);
+                return new JsonObject { ["key"] = key };
+            }
+
+            case "image.import.clear":
+                _host.Images.Library.ClearImport(Str(p, "key"));
+                return new JsonObject { ["ok"] = true };
+
+            case "image.remove":
+            {
+                var m = ImageEngine.ImageCatalog.Find(Str(p, "model")) ?? throw new RpcException("model_not_found", "Modelo de imagem desconhecido");
+                if (_host.Images.Loaded == m) throw new RpcException("busy", "Este modelo está em uso agora. Tente de novo em instantes.");
+                _host.Images.Store.Delete(m);
+                _host.Security.Write(SecurityLevel.Info, "image.remove", $"{DeviceName} removeu {m.Name}", DeviceId, Route);
+                return _host.Images.ToJson();
             }
 
             case "devices.list":
@@ -658,8 +712,9 @@ public sealed class Session : IAsyncDisposable
             new JsonObject { ["id"] = "standard", ["label"] = "Padrão" },
             new JsonObject { ["id"] = "high", ["label"] = "Alta" });
         o["counts"] = new JsonArray(1, 2, 4);
+        // compatível com o app 1.2: só os dois motores da fase 3 ("fast"/"quality")
         var engines = new JsonArray();
-        foreach (var m in ImageEngine.ImageCatalog.All)
+        foreach (var m in new[] { ImageEngine.ImageCatalog.ZImageTurbo, ImageEngine.ImageCatalog.FluxDev })
         {
             var d = m.Defaults;
             engines.Add(new JsonObject
@@ -672,48 +727,206 @@ public sealed class Session : IAsyncDisposable
             });
         }
         o["engines"] = engines;
+        o["samplers"] = new JsonArray(ImageEngine.Samplers.All.Select(s => (JsonNode)new JsonObject { ["id"] = s.Id, ["label"] = s.Label }).ToArray());
+        o["schedules"] = new JsonArray(ImageEngine.Samplers.Schedules.Select(s => (JsonNode)new JsonObject { ["id"] = s.Id, ["label"] = s.Label }).ToArray());
+        var aux = ImageEngine.ImageCatalog.AuxPackages.ToDictionary(a => a.Id, a => _host.Images.Store.IsInstalled(a));
+        o["tools"] = new JsonObject
+        {
+            ["controlnet"] = aux["controlnet-union-sdxl"], ["pose"] = aux["controlnet-union-sdxl"] && aux["vitpose-base"] && aux["rtdetr-r50"],
+            ["depth"] = aux["controlnet-union-sdxl"] && aux["depth-anything-v2-small"], ["canny"] = aux["controlnet-union-sdxl"],
+            ["reference"] = aux["ip-adapter-sdxl"], ["detail"] = aux["grounding-dino-tiny"], ["upscale"] = aux["realesrgan"],
+        };
         return o;
     }
 
-    /// <summary>Valida e completa o pedido de imagem (formato, qualidade → passos, seed, motor automático).</summary>
+    private static readonly string[] ImageOps = ["txt2img", "img2img", "inpaint", "outpaint", "upscale", "detail", "hd"];
+
+    /// <summary>
+    /// Valida e completa o pedido de imagem: modelo (escolhido, automático ou o da imagem de origem), operação, formato,
+    /// qualidade → passos, sampler/CFG do preset do modelo (ou do Estúdio), LoRAs, controles e seed. "recreate" repete
+    /// uma imagem exatamente (mesmo prompt final, modelo, LoRAs, seed e parâmetros).
+    /// </summary>
     private ImageEngine.ImageRequest BuildImageRequest(JsonObject p)
     {
-        var prompt = Str(p, "prompt").Trim();
+        var images = _host.Images;
+        if (p["recreate"]?.GetValue<string>() is { Length: > 0 } recreateId) return RecreateRequest(recreateId, p);
+
+        var op = p["op"]?.GetValue<string>() is { } o0 && ImageOps.Contains(o0) ? o0 : "txt2img";
+        var prompt = (p["prompt"]?.GetValue<string>() ?? "").Trim();
         if (prompt.Length > 4000) throw new RpcException("bad_request", "Descrição longa demais (máx. 4000 caracteres).");
-        var choice = p["engine"]?.GetValue<string>() is "quality" or "auto" ? p["engine"]!.GetValue<string>() : "fast";
+        var source = ImageRef(p["source"]?.GetValue<string>());
+        if (op != "txt2img" && source is null) throw new RpcException("bad_request", "Falta a imagem a editar.");
+        JsonObject? srcMeta = source is not null && source.StartsWith("img:") ? images.Outputs.ReadMeta(source[4..]) : null;
+        if (srcMeta is not null && srcMeta["device"]?.GetValue<string>() != DeviceId) srcMeta = null; // prompt de outro aparelho não vaza
+        if (prompt.Length == 0) prompt = srcMeta?["prompt"]?.GetValue<string>() ?? "";
+        if (prompt.Length == 0 && op is "txt2img" or "img2img" or "inpaint" or "outpaint")
+            throw new RpcException("bad_request", "Descreva o que você quer na imagem.");
+
+        // modelo: escolhido (id) | fast | quality | auto
+        var choice = p["model"]?.GetValue<string>() is { Length: > 0 } mid ? "model:" + mid
+            : p["engine"]?.GetValue<string>() is "quality" or "auto" ? p["engine"]!.GetValue<string>() : "fast";
+        if (op != "txt2img" && choice is "fast" or "quality" && p["model"] is null && p["engine"] is null) choice = "auto";
         var quality = p["quality"]?.GetValue<string>() is "fast" or "high" ? p["quality"]!.GetValue<string>() : "standard";
         var count = p["count"]?.GetValue<int>() is 2 or 4 ? p["count"]!.GetValue<int>() : 1;
+        if (op is "upscale" or "hd" or "detail" or "inpaint" or "outpaint") count = Math.Min(count, op == "inpaint" ? 4 : 1);
+
+        // LoRAs (sem sintaxe: id + peso)
+        var loraUses = new List<ImageEngine.LoraUse>();
+        foreach (var l in (p["loras"] as JsonArray ?? []).OfType<JsonObject>().Take(5))
+        {
+            var id = l["id"]?.GetValue<string>() ?? "";
+            var e = images.Library.Find(id) ?? throw new RpcException("lora_missing", "Um dos LoRAs escolhidos não está na biblioteca do PC.");
+            loraUses.Add(new ImageEngine.LoraUse(e.Id, Math.Round(Math.Clamp(l["weight"]?.GetValue<double>() ?? e.Weight, -2, 2), 2)));
+        }
+        var loraFamily = loraUses.Count > 0 ? images.Library.Find(loraUses[0].Id)!.Family : null;
+
+        // tamanho: formato (criação) ou o da imagem de origem (edição)
         var formatId = p["format"]?.GetValue<string>() ?? "square";
         int w, h;
-        if (ImageEngine.ImageFormats.Find(formatId) is { } f) (w, h) = (f.Width, f.Height);
+        if (op == "txt2img")
+        {
+            if (ImageEngine.ImageFormats.Find(formatId) is { } f) (w, h) = (f.Width, f.Height);
+            else
+            {
+                formatId = "custom";
+                w = p["width"]?.GetValue<int>() ?? 1024;
+                h = p["height"]?.GetValue<int>() ?? 1024;
+            }
+        }
         else
         {
-            formatId = "custom";
-            w = p["width"]?.GetValue<int>() ?? 1024;
-            h = p["height"]?.GetValue<int>() ?? 1024;
+            formatId = "source";
+            (w, h) = SourceSize(source!, p);
         }
-        var (def, note, error) = _host.Images.Choose(choice, quality, prompt, (long)w * h);
+        var sourceModel = images.ModelOfImage(source);
+        var (def, note, error) = images.Choose(choice, quality, prompt, op == "txt2img" ? (long)w * h : 1024 * 1024, loraFamily, sourceModel);
         if (def is null)
         {
             var (code, msg) = error switch
             {
                 { } e when e.StartsWith("flux_unavailable") => ("model_not_installed", "O FLUX.1 Dev ainda não foi liberado neste PC (precisa da sua conta do Hugging Face)."),
                 { } e when e.StartsWith("model_not_installed") => ("model_not_installed", $"O {ImageEngine.ImageCatalog.Find(e.Split(':')[1])?.Name ?? "modelo"} ainda não está instalado no PC."),
-                "too_large" => ("bad_request", "Esse tamanho é grande demais para o modelo de qualidade."),
+                "model_unknown" => ("model_not_found", "Este modelo de imagem não existe neste PC."),
+                "too_large" => ("bad_request", "Esse tamanho é grande demais para este modelo."),
                 _ => ("model_not_installed", "Nenhum modelo de imagem instalado no PC."),
             };
             throw new RpcException(code, msg);
         }
+        var caps = def.Caps;
+        if (op == "img2img" && !caps.Img2Img || op == "inpaint" && !caps.Inpaint || op == "outpaint" && !caps.Outpaint)
+            throw new RpcException("unsupported", $"O {def.Name} não faz esta edição.");
+        var controlType = p["control"]?["type"]?.GetValue<string>() is "pose" or "depth" or "canny" ? p["control"]!["type"]!.GetValue<string>() : null;
+        var reference = ImageRef(p["reference"]?["source"]?.GetValue<string>());
+        if ((controlType is not null || reference is not null) && def.Engine != "sdxl")
+            throw new RpcException("unsupported", "Pose, estrutura e imagem de referência funcionam nos modelos especialistas (SDXL).");
+        if (loraUses.Count > 0)
+            foreach (var u in loraUses)
+            {
+                var (ok, warn) = ImageEngine.ImageLibrary.Compatible(images.Library.Find(u.Id)!, def);
+                if (!ok) throw new RpcException("lora_incompatible", warn ?? "LoRA incompatível com este modelo.");
+            }
+
         var d = def.Defaults;
-        (w, h) = ImageEngine.ImageFormats.Snap(w, h, d.MaxPixels);
+        if (op == "txt2img") (w, h) = ImageEngine.ImageFormats.Snap(w, h, d.MaxPixels);
         var steps = p["steps"]?.GetValue<int>() is int st ? Math.Clamp(st, d.StepsMin, d.StepsMax) : d.Steps[quality switch { "fast" => 0, "high" => 2, _ => 1 }];
         var guidance = d.GuidanceAdjustable && p["guidance"]?.GetValue<double>() is double g ? Math.Clamp(g, d.GuidanceMin, d.GuidanceMax) : d.Guidance;
         long seed = p["seed"]?.GetValue<long>() is long sd and >= 0 and < int.MaxValue - 8 ? sd : System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, int.MaxValue - 8);
+        var expand = (p["expand"] as JsonArray)?.Select(x => Math.Clamp((x?.GetValue<int>() ?? 0) / 8 * 8, 0, 1536)).ToArray();
+        if (op == "outpaint" && (expand is not { Length: 4 } || expand.Sum() == 0)) throw new RpcException("bad_request", "Escolha para que lado expandir.");
+        var detail = (p["detail"] as JsonArray)?.Select(x => x?.GetValue<string>()).Where(x => x is "face" or "hand").Select(x => x!).Distinct().ToArray();
         return new ImageEngine.ImageRequest
         {
-            Prompt = prompt, Choice = choice, Model = def.Id, Width = w, Height = h, Format = formatId, Quality = quality, Steps = steps,
-            Guidance = guidance, Count = count, Seed = seed, Enhance = p["enhance"]?.GetValue<bool>() ?? false, AutoNote = choice == "auto" ? note : null,
+            Prompt = prompt, Choice = choice.StartsWith("model:") ? "model" : choice, Model = def.Id, Width = w, Height = h, Format = formatId,
+            Quality = quality, Steps = steps, Guidance = guidance, Count = count, Seed = seed, Enhance = p["enhance"]?.GetValue<bool>() ?? false,
+            AutoNote = choice == "auto" ? note : null, Op = op,
+            Negative = p["negative"]?.GetValue<string>() is { } neg && neg.Length <= 2000 ? neg : null, Raw = p["raw"]?.GetValue<bool>() ?? false,
+            Sampler = ImageEngine.Samplers.Valid(p["sampler"]?.GetValue<string>()) && def.Engine == "sdxl" ? p["sampler"]!.GetValue<string>() : null,
+            Schedule = ImageEngine.Samplers.ValidSchedule(p["schedule"]?.GetValue<string>()) && def.Engine == "sdxl" ? p["schedule"]!.GetValue<string>() : null,
+            ClipSkip = p["clipSkip"]?.GetValue<int>() is int cs and >= 1 and <= 4 && def.Engine == "sdxl" ? cs : null,
+            GuidanceRescale = p["guidanceRescale"]?.GetValue<double>() is double gr && def.Engine == "sdxl" ? Math.Clamp(gr, 0, 1) : null,
+            Strength = p["strength"]?.GetValue<double>() is double s ? Math.Clamp(s, 0.05, 1) : null,
+            Source = source, Mask = ImageRef(p["mask"]?.GetValue<string>()), Expand = op == "outpaint" ? expand : null,
+            ControlType = controlType, ControlSource = ImageRef(p["control"]?["source"]?.GetValue<string>()),
+            ControlScale = p["control"]?["scale"]?.GetValue<double>(), Reference = reference, ReferenceScale = p["reference"]?["scale"]?.GetValue<double>(),
+            Detail = detail is { Length: > 0 } ? detail : null, Upscale = p["upscale"]?.GetValue<int>() is 2 or 4 ? p["upscale"]!.GetValue<int>() : op == "hd" ? 2 : 0,
+            Hd = op == "hd" || (p["hd"]?.GetValue<bool>() ?? false), Loras = loraUses,
+            Parent = source is not null && source.StartsWith("img:") ? source[4..] : null,
         };
+    }
+
+    /// <summary>"img:&lt;id&gt;" (imagem do PC) ou "blob:&lt;sha&gt;" (enviada pelo celular); qualquer outra coisa é recusada.</summary>
+    private string? ImageRef(string? r)
+    {
+        if (string.IsNullOrEmpty(r)) return null;
+        if (r.StartsWith("img:") && ImageEngine.ImageOutputs.ValidId(r[4..]))
+        {
+            if (_host.Images.Outputs.BaseOf(r[4..]) is null) throw new RpcException("image_unknown", "A imagem não está mais no PC.");
+            return r;
+        }
+        if (r.StartsWith("blob:") && Jobs.BlobStore.ValidHash(r[5..]))
+        {
+            if (!_host.Blobs.Has(r[5..])) throw new RpcException("blob_missing", "A imagem enviada não chegou ao PC. Tente de novo.");
+            return r;
+        }
+        throw new RpcException("bad_request", "Referência de imagem inválida.");
+    }
+
+    private (int W, int H) SourceSize(string source, JsonObject p)
+    {
+        if (source.StartsWith("img:") && _host.Images.Outputs.BaseOf(source[4..]) is { } b)
+            try
+            {
+                using var fs = File.OpenRead(b + ".png");
+                var x = new byte[24];
+                fs.ReadExactly(x);
+                return ((x[16] << 24) | (x[17] << 16) | (x[18] << 8) | x[19], (x[20] << 24) | (x[21] << 16) | (x[22] << 8) | x[23]);
+            }
+            catch (Exception) { }
+        return (Math.Clamp(p["width"]?.GetValue<int>() ?? 1024, 64, 8192), Math.Clamp(p["height"]?.GetValue<int>() ?? 1024, 64, 8192));
+    }
+
+    /// <summary>Recriar: mesmo modelo, prompt final, negativo, LoRAs, seed, tamanho e parâmetros (não recompila).</summary>
+    private ImageEngine.ImageRequest RecreateRequest(string id, JsonObject p)
+    {
+        var m = _host.Images.Outputs.ReadMeta(id) ?? throw new RpcException("image_unknown", "Esta imagem não está mais no PC.");
+        if (m["device"]?.GetValue<string>() != DeviceId) throw new RpcException("forbidden", "Imagem de outro aparelho.");
+        var op = m["op"]?.GetValue<string>() ?? "txt2img";
+        if (op == "inpaint") throw new RpcException("unsupported", "Edições com pincel não podem ser recriadas exatamente (a máscara não fica guardada).");
+        var def = ImageEngine.ImageCatalog.Find(m["model"]?.GetValue<string>() ?? "") ?? throw new RpcException("model_not_found", "O modelo desta imagem não existe mais no PC.");
+        if (!_host.Images.Ready(def)) throw new RpcException("model_not_installed", $"O {def.Name} não está instalado no PC.");
+        if (def.Sha256 is not null && m["modelSha256"]?.GetValue<string>() is { } sha && sha != def.Sha256)
+            throw new RpcException("model_changed", $"O {def.Name} instalado não é mais a mesma versão desta imagem.");
+        var loras = new List<ImageEngine.LoraUse>();
+        foreach (var l in (m["loras"] as JsonArray ?? []).OfType<JsonObject>())
+        {
+            var e = _host.Images.Library.Find(l["id"]!.GetValue<string>());
+            if (e is null || e.Sha256 != l["sha256"]?.GetValue<string>())
+                throw new RpcException("lora_missing", $"O LoRA \"{l["name"]}\" desta imagem não está mais na biblioteca.");
+            loras.Add(new ImageEngine.LoraUse(e.Id, l["weight"]!.GetValue<double>()));
+        }
+        var source = m["source"]?.GetValue<string>();
+        if (source is not null && (!source.StartsWith("img:") || _host.Images.Outputs.BaseOf(source[4..]) is null))
+            throw new RpcException("source_missing", "A imagem de origem desta edição não está mais no PC.");
+        T? V<T>(string k) => m[k] is JsonValue v && v.TryGetValue<T>(out var r) ? r : default;
+        return new ImageEngine.ImageRequest
+        {
+            Prompt = V<string>("prompt") ?? "", Choice = "model", Model = def.Id, Width = V<int?>("genWidth") ?? V<int>("width"), Height = V<int?>("genHeight") ?? V<int>("height"),
+            Format = V<string>("format") ?? "square", Quality = V<string>("quality") ?? "standard", Steps = V<int>("steps"), Guidance = V<double>("guidance"),
+            Count = 1, Seed = V<long>("seed"), Op = op, Raw = V<bool>("raw"), Sampler = V<string>("sampler"), Schedule = V<string>("schedule"),
+            ClipSkip = V<int?>("clipSkip"), GuidanceRescale = V<double?>("guidanceRescale"), Strength = V<double?>("strength"), Source = source,
+            Expand = (m["expand"] as JsonArray)?.Select(x => x!.GetValue<int>()).ToArray(), ControlType = null,
+            Upscale = V<int?>("upscale") ?? 0, Hd = V<bool>("hd"),
+            Detail = (m["workflow"] as JsonArray)?.Any(x => x?.GetValue<string>() == "detail") == true ? ["face", "hand"] : null,
+            Loras = loras, FinalPrompt = V<string>("finalPrompt"), FinalNegative = V<string>("negative") ?? "", Parent = id,
+            AutoNote = "Recriada com os mesmos parâmetros",
+        };
+    }
+
+    /// <summary>Um LoRA para o celular, com a compatibilidade em relação ao modelo pedido (quando houver).</summary>
+    private JsonObject LoraJson(ImageEngine.LoraEntry l, ImageEngine.ImageModelDef? model)
+    {
+        var (ok, warn) = model is null ? (true, (string?)null) : ImageEngine.ImageLibrary.Compatible(l, model);
+        return l.ToJson(ok, warn);
     }
 
     private string ResolveModel(string modelOrTier)

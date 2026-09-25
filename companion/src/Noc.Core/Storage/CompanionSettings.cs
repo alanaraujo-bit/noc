@@ -42,6 +42,10 @@ public sealed class CompanionSettings
     public int ImageKeepWarmWithLlmSeconds { get; set; } = 90;
     /// <summary>VRAM (GiB) que o motor de imagem deixa para outros programas (ex.: um jogo aberto). 0 = usa o que estiver livre.</summary>
     public double ImageVramReserveGiB { get; set; }
+    /// <summary>Consultar o Civitai pelo hash (SHA-256) de LoRAs/checkpoints importados para descobrir nome, família e licença.</summary>
+    public bool ImageLookupCivitai { get; set; } = true;
+    /// <summary>Importar sozinho LoRAs e checkpoints SDXL que chegarem na pasta Downloads.</summary>
+    public bool ImageWatchDownloads { get; set; } = true;
 
     private static readonly JsonSerializerOptions Json = new()
     {

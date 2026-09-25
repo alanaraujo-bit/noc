@@ -69,6 +69,29 @@ public sealed class ImageOutputs
         catch (Exception) { return null; }
     }
 
+    /// <summary>Metadados das imagens de um aparelho, mais novas primeiro (galeria sincronizada do PC).</summary>
+    public List<JsonObject> ListMeta(string deviceId, int max)
+    {
+        var res = new List<JsonObject>();
+        if (!Directory.Exists(ImagePaths.Outputs)) return res;
+        var files = new DirectoryInfo(ImagePaths.Outputs).EnumerateFiles("*.meta", SearchOption.AllDirectories)
+            .OrderByDescending(f => f.LastWriteTimeUtc);
+        foreach (var f in files)
+        {
+            if (res.Count >= max) break;
+            try
+            {
+                if (JsonNode.Parse(ProtectedData.Unprotect(File.ReadAllBytes(f.FullName), Entropy, DataProtectionScope.CurrentUser)) is not JsonObject m) continue;
+                if (m["device"]?.GetValue<string>() != deviceId) continue;
+                if (!File.Exists(Path.ChangeExtension(f.FullName, ".png"))) continue;
+                m.Remove("device");
+                res.Add(m);
+            }
+            catch (Exception) { }
+        }
+        return res;
+    }
+
     public static string FileOf(string basePath, string kind) => basePath + (kind == "thumb" ? ".thumb.jpg" : ".png");
 
     public static string Sha256Of(string path)
@@ -98,7 +121,7 @@ public sealed class ImageOutputs
     {
         var b = BaseOf(id);
         if (b is null) return false;
-        foreach (var ext in new[] { ".png", ".thumb.jpg", ".meta" })
+        foreach (var ext in new[] { ".png", ".thumb.jpg", ".meta", ".control.jpg" })
             try { File.Delete(b + ext); } catch (Exception) { }
         lock (_lock) _index.Remove(id);
         return true;

@@ -16,9 +16,9 @@ public class ImageEngineTests(ITestOutputHelper log)
 {
     private static bool Enabled => Environment.GetEnvironmentVariable("NOC_E2E") == "1";
     /// <summary>Estado de instalação conferido pelo primeiro teste (os outros não precisam reconferir 33 GB).</summary>
-    private static string Seed => Path.Combine(Path.GetTempPath(), "noc-e2e-image-models.json");
+    internal static string Seed => Path.Combine(Path.GetTempPath(), "noc-e2e-image-models.json");
 
-    private sealed record Paired(CompanionHost Host, TestClient Client, ECDsa Device, string Root) : IAsyncDisposable
+    internal sealed record Paired(CompanionHost Host, TestClient Client, ECDsa Device, string Root) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {
@@ -28,7 +28,7 @@ public class ImageEngineTests(ITestOutputHelper log)
         }
     }
 
-    private static async Task<Paired> PairedAsync(string? root = null, ECDsa? device = null, bool seed = true, Action<CompanionHost>? tweak = null)
+    internal static async Task<Paired> PairedAsync(string? root = null, ECDsa? device = null, bool seed = true, Action<CompanionHost>? tweak = null, bool? pairNow = null)
     {
         var fresh = root is null;
         root ??= Path.Combine(Path.GetTempPath(), "noc-e2e-" + Guid.NewGuid().ToString("N")[..8]);
@@ -38,7 +38,7 @@ public class ImageEngineTests(ITestOutputHelper log)
         tweak?.Invoke(host);
         var url = $"ws://127.0.0.1:{host.Lan.Port}/v1/ws";
         device ??= ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        if (fresh)
+        if (pairNow ?? fresh)
         {
             var offer = host.Pairing.NewQrOffer();
             await using var pair = await TestClient.ConnectAsync(url, HandshakeMode.PairQr, th => TestClient.PairAuth(th, device, offer.PairingId, offer.Secret));
@@ -48,10 +48,10 @@ public class ImageEngineTests(ITestOutputHelper log)
         return new Paired(host, c, device, root);
     }
 
-    private sealed record Run(JsonObject End, List<JsonObject> Events, List<JsonObject> Previews);
+    internal sealed record Run(JsonObject End, List<JsonObject> Events, List<JsonObject> Previews);
 
     /// <summary>Acompanha a tarefa até o fim, conferindo a sequência (sem buracos) e guardando as prévias efêmeras à parte.</summary>
-    private static async Task<Run> Collect(TestClient c, string job, TimeSpan max, int fromSeq = 0, Func<JsonObject, Task>? onEvent = null)
+    internal static async Task<Run> Collect(TestClient c, string job, TimeSpan max, int fromSeq = 0, Func<JsonObject, Task>? onEvent = null)
     {
         var events = new List<JsonObject>();
         var previews = new List<JsonObject>();
@@ -74,7 +74,7 @@ public class ImageEngineTests(ITestOutputHelper log)
         }
     }
 
-    private static async Task<byte[]> Download(TestClient c, string id, string kind)
+    internal static async Task<byte[]> Download(TestClient c, string id, string kind)
     {
         using var ms = new MemoryStream();
         long total = -1;
@@ -89,13 +89,13 @@ public class ImageEngineTests(ITestOutputHelper log)
         return ms.ToArray();
     }
 
-    private static JsonObject Ok(JsonObject res)
+    internal static JsonObject Ok(JsonObject res)
     {
         Assert.True(res["ok"]!.GetValue<bool>(), res.ToJsonString());
         return res["r"]!.AsObject();
     }
 
-    private static async Task WaitAsync(Func<bool> cond, TimeSpan max, string what)
+    internal static async Task WaitAsync(Func<bool> cond, TimeSpan max, string what)
     {
         var until = DateTime.UtcNow + max;
         while (!cond())
