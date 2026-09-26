@@ -12,6 +12,8 @@ namespace Noc.Core.ImageEngine;
 /// <summary>O que o cabeçalho de um .safetensors revela (sem carregar nenhum peso e sem executar nada).</summary>
 public sealed record SafetensorsInfo(IReadOnlyCollection<string> Keys, IReadOnlyDictionary<string, string> Meta, long HeaderBytes)
 {
+    /// <summary>Formato de cada tensor (do cabeçalho; nenhum peso é lido).</summary>
+    public IReadOnlyDictionary<string, long[]> Shapes { get; init; } = new Dictionary<string, long[]>();
     /// <summary>Lê só o cabeçalho JSON (os primeiros bytes). Arquivo que não é safetensors válido → null.</summary>
     public static SafetensorsInfo? Read(string path)
     {
@@ -30,7 +32,11 @@ public sealed record SafetensorsInfo(IReadOnlyCollection<string> Keys, IReadOnly
             if (root["__metadata__"] is JsonObject m)
                 foreach (var (k, v) in m) meta[k] = v?.ToString() ?? "";
             var keys = root.Select(kv => kv.Key).Where(k => k != "__metadata__").ToList();
-            return new SafetensorsInfo(keys, meta, n);
+            var shapes = new Dictionary<string, long[]>();
+            foreach (var (k, v) in root)
+                if (k != "__metadata__" && v?["shape"] is JsonArray sh)
+                    shapes[k] = sh.Select(x => x?.GetValue<long>() ?? 0).ToArray();
+            return new SafetensorsInfo(keys, meta, n) { Shapes = shapes };
         }
         catch (Exception) { return null; }
     }
@@ -64,6 +70,10 @@ public static class ModelDetector
         if (isLora)
         {
             kind = "lora";
+            // o jeito mais confiável: a largura do contexto na atenção cruzada (SDXL 2048, SD 1.5 768, SD 2 1024)
+            var ctx = h.Shapes.Where(kv => (kv.Key.Contains("attn2_to_k") || kv.Key.Contains("attn2.to_k")) &&
+                                           (kv.Key.Contains("lora_down") || kv.Key.Contains("lora_A") || kv.Key.Contains("lora.down")) && kv.Value.Length >= 2)
+                .Select(kv => kv.Value[1]).FirstOrDefault();
             if (Any("lora_unet_double_blocks") || Any("lora_unet_single_blocks") || Has("transformer.single_transformer_blocks") ||
                 Has("double_blocks.") || Has("single_blocks.")) arch = "flux";
             else if (Any("lora_te2_") || Has("text_encoder_2.") || Any("lora_unet_input_blocks") && Has("transformer_blocks_9") ||
@@ -72,6 +82,9 @@ public static class ModelDetector
                 arch = "sdxl";
             else if (Any("lora_unet_") || Any("lora_te_") || Any("unet.")) arch = SdxlByMeta(h) ? "sdxl" : "sd15";
             if (arch != "flux" && SdxlByMeta(h)) arch = "sdxl";
+            // nomes do diffusers no formato kohya (lora_unet_down_blocks_2_attentions_0_transformer_blocks_9...): o SD 1.5 só tem 1 bloco
+            if (arch != "flux" && (Has("transformer_blocks_1_") || Has("transformer_blocks.1.") || Has("transformer_blocks_9"))) arch = "sdxl";
+            if (arch != "flux" && ctx > 0) arch = ctx == 2048 ? "sdxl" : ctx == 768 ? "sd15" : ctx == 1024 ? "sd2" : arch;
         }
         else if (Any("model.diffusion_model.input_blocks") || Any("model.diffusion_model.output_blocks"))
         {
@@ -206,6 +219,15 @@ public sealed class ImageLibrary : IDisposable
         _http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = true, ConnectTimeout = TimeSpan.FromSeconds(20) }) { Timeout = Timeout.InfiniteTimeSpan };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Noc-Companion/" + CompanionHost.Version);
         _loras = Load();
+        // detecção melhorou entre versões: reconfere a arquitetura pelo cabeçalho (só lê os primeiros KB de cada arquivo)
+        var changed = false;
+        foreach (var l in _loras.Where(l => System.IO.File.Exists(l.File)))
+            if (SafetensorsInfo.Read(l.File) is { } h && ModelDetector.Detect(h, Path.GetFileNameWithoutExtension(l.File)) is { Kind: "lora" } d && d.Arch != l.Arch && d.Arch != "unknown")
+            {
+                l.Arch = d.Arch;
+                changed = true;
+            }
+        if (changed) Save();
     }
 
     private static List<LoraEntry> Load()
@@ -285,7 +307,12 @@ public sealed class ImageLibrary : IDisposable
         await Task.Yield();
         LoraEntry? existing;
         lock (_lock) existing = _loras.FirstOrDefault(l => l.Sha256 == sha && System.IO.File.Exists(l.File));
-        if (existing is not null) return existing.Id;
+        if (existing is not null)
+        {
+            // já está na biblioteca (mesmo hash): o arquivo baixado agora não fica sobrando
+            if (move) try { File.Delete(path); } catch (Exception) { }
+            return existing.Id;
+        }
         if (det.Arch is not ("sdxl" or "flux" or "sd15"))
             throw new ImportException("unknown_arch", "Não reconheci a arquitetura deste LoRA.");
         var id = sha[..16];
@@ -324,7 +351,11 @@ public sealed class ImageLibrary : IDisposable
                 _ => "Arquitetura do checkpoint não reconhecida.",
             });
         var dup = ImageCatalog.All.FirstOrDefault(m => m.Sha256 == sha);
-        if (dup is not null) return dup.Id;
+        if (dup is not null)
+        {
+            if (move) try { File.Delete(path); } catch (Exception) { }
+            return dup.Id;
+        }
         var id = "ckpt-" + sha[..12];
         var family = info?["family"]?.GetValue<string>() ?? det.Family;
         var (defaults, preset, category, tagline) = ImageCatalog.FamilyTemplate(family, det.Prediction);

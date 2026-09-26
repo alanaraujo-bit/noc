@@ -107,6 +107,14 @@ public class Phase4UnitTests
     }
 
     [Fact]
+    public void Kohya_lora_with_diffusers_names_is_sdxl_by_context_width()
+    {
+        var p = WriteSafetensors([], "lora_unet_down_blocks_1_attentions_0_proj_in.lora_down.weight",
+            "lora_unet_down_blocks_2_attentions_0_transformer_blocks_9_attn2_to_k.lora_down.weight");
+        Assert.Equal("sdxl", ModelDetector.Detect(SafetensorsInfo.Read(p)!, "papercut").Arch);
+    }
+
+    [Fact]
     public void Long_training_captions_never_become_triggers()
     {
         var p = WriteSafetensors(new()
