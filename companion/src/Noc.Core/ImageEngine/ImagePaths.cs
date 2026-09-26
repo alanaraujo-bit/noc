@@ -29,7 +29,7 @@ public static class ImagePaths
 
     /// <summary>
     /// Etiqueta do host (NOC_IMAGE_HOST_TAG): um Companion de desenvolvimento/teste na mesma máquina usa runtime e tmp
-    /// próprios (runtime-dev, tmp-dev) e compartilha só os modelos, as otimizações e as imagens. Sem isso, os dois
+    /// próprios (runtime-dev, tmp-dev, outputs-dev, user-dev) e compartilha só os modelos oficiais e as otimizações. Sem isso, os dois
     /// regravariam o worker um do outro, reinstalariam o ambiente um do outro e o "encerrar órfãos" de um mataria o worker do outro.
     /// </summary>
     public static string? HostTag { get; set; } = Environment.GetEnvironmentVariable("NOC_IMAGE_HOST_TAG") is { Length: > 0 } t ? t : null;
@@ -39,10 +39,10 @@ public static class ImagePaths
     public static string Runtime => Path.Combine(Root, Tagged("runtime"));
     public static string Models => Path.Combine(Root, "models");
     public static string Cache => Path.Combine(Root, "cache");
-    public static string Outputs => Path.Combine(Root, "outputs");
+    public static string Outputs => Path.Combine(Root, Tagged("outputs"));
     public static string Tmp => Path.Combine(Root, Tagged("tmp"));
     /// <summary>LoRAs e checkpoints importados pelo usuário (fora de "models", que só tem distribuições oficiais).</summary>
-    public static string User => Path.Combine(Root, "user");
+    public static string User => Path.Combine(Root, Tagged("user"));
     public static string UserCheckpoints => Path.Combine(User, "checkpoints");
     public static string UserLoras => Path.Combine(User, "loras");
 

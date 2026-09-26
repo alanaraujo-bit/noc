@@ -9,7 +9,7 @@
 
 4. **Conexão direta na Wi-Fi neste PC.** O Companion deste computador foi (re)instalado só para o seu usuário, sem administrador, então **não há regra de firewall** para a conexão direta. Pelo relay tudo funciona. Para a conexão direta (mais rápida em casa), rode o `Noc-Companion-Setup-1.1.0.exe` e escolha "Instalar para todos os usuários" (pede administrador).
 
-5. **Atualize os dois lados.** A combinação testada é app 1.1 + Companion 1.1. O app 1.1 só usa o que o PC anuncia (com um Companion antigo, o Diagnóstico mostra "Companion antigo" e perfis, imagens e voz ficam indisponíveis), mas versões misturadas não foram testadas de ponta a ponta. Um caso conhecido: o app 1.0 pode repetir um trecho da resposta se o Companion 1.1 reiniciar no meio de uma geração, porque ele não conhece o aviso de "retomada".
+5. **Atualize os dois lados.** A combinação testada é app 1.3 + Companion 1.3 (instale o `Noc-1.3.0.apk` no celular; o app 1.2 funciona com o Companion 1.3, mas não mostra LoRAs, guias nem edição). O app 1.1 só usa o que o PC anuncia (com um Companion antigo, o Diagnóstico mostra "Companion antigo" e perfis, imagens e voz ficam indisponíveis), mas versões misturadas não foram testadas de ponta a ponta. Um caso conhecido: o app 1.0 pode repetir um trecho da resposta se o Companion 1.1 reiniciar no meio de uma geração, porque ele não conhece o aviso de "retomada".
 
 6. **Guarde a chave de assinatura do Android.** Ela fica em `android/keystore/noc-release.jks`, e a senha está em `android/keystore.properties`. Os dois ficam fora do git de propósito. Sem eles, versões futuras do APK não conseguem atualizar a instalada: seria preciso desinstalar, o que apaga as conversas do celular. Faça um backup em local seguro.
 
