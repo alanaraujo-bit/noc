@@ -276,3 +276,17 @@ Testes com o APK de release (R8, com.noc.app 1.1.0) pareado ao Companion 1.1.0 i
   seguinte. Corrigido. Otimização inicial do FLUX estourou o limite de 1 h no PC do usuário (disco ocupado) → 3 h.
 - Testado: FLUX txt2img, variação e pincel (worker) e P10 E2E (gera + edita com o Qwen carregado, sem recuperação de VRAM).
 ## Suíte E2E completa: 81/81 (+ P10) — fases 1 a 4 com LM Studio, relay, GPU e modelos reais.
+## Extensibilidade (checkpoint e LoRAs novos) — testado no app
+- Illustrious XL v0.1 importado por link do Hugging Face pelo celular: detectado sozinho (família illustrious, epsilon, VAE
+  embutido, 1024 px), entrou nos Especialistas com o preset de tags, gerou em 27 s e "Recriar" deu o MESMO SHA-256.
+- LoRA salvo na pasta Downloads do PC → importado sozinho, nome pelo Civitai (hash). BUG corrigido: LoRA kohya com nomes do
+  diffusers era lido como SD 1.5; agora a arquitetura vem da largura do contexto (attn2 to_k: 2048 = SDXL) e é reconferida ao
+  abrir. Importação por link não deixa mais cópia duplicada em user/downloads. Civitai passou a exigir login em alguns
+  downloads: o Noc rejeita a resposta de erro (arquivo inválido) e explica como baixar pelo navegador.
+## Release 1.3.0 (2026-09-25)
+- Companion instalado do usuário atualizado 1.2.0 → 1.3.0 (instalador silencioso por usuário): o ambiente Python do motor foi
+  atualizado sozinho em 24 s (peft/opencv/scipy), os 4 módulos do worker sincronizados, especialistas e componentes adotados
+  pelo hash (nada baixado de novo). Página Imagens do Companion conferida.
+- APK release (R8) 1.3.0 instalado por cima do 1.1.0 no emulador: migrações Room 2→3→4 sem perdas; pareado por código
+  (SAS 317 232 nos dois lados); Pony V6 pelo Companion instalado em 31 s; variação (ImageEdit sob R8) ok.
+- Artefatos: dist/Noc-Companion-Setup-1.3.0.exe, dist/Noc-1.3.0.apk (não publicados no GitHub: decisão do usuário).
