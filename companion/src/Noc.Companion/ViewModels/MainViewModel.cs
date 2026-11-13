@@ -79,7 +79,7 @@ public sealed partial class MainViewModel : Observable
         Forget = new Command(p => { if (p is string id) _host.Devices.Forget(id); });
         Disconnect = new Command(p => { if (p is string id) _ = _host.DisconnectDeviceAsync(id); });
         OpenData = new Command(() => Shell.Open(AppPaths.Root));
-        OpenLmStudio = new Command(() => { if (LmStudioLocator.AppPath() is { } p) Shell.Open(p); else Shell.Open("https://lmstudio.ai"); });
+        OpenLmStudio = new Command(() => { if (LlmRuntime.AppPath() is { } p) Shell.Open(p); else Shell.Open(LlmRuntime.DownloadUrl); });
         TestRemote = new Command(() => { _ = TestRemoteAsync(); });
         Navigate = new Command(p => Page = p as string ?? "overview");
         InitModels();
@@ -120,6 +120,16 @@ public sealed partial class MainViewModel : Observable
 
     private string _lmTitle = "", _lmDetail = "";
     public string LmTitle { get => _lmTitle; set => Set(ref _lmTitle, value); }
+    // Textos que citam o motor de IA em uso (LM Studio ou Ollama); ele é escolhido ao abrir e não muda com o app aberto.
+    public string RuntimeLabel => LlmRuntime.Name.ToUpperInvariant();
+    public string StartLmText => $"Iniciar {LlmRuntime.Name}";
+    public string OpenLmText => $"Abrir {LlmRuntime.Name}";
+    public string AutoLmTitle => $"Ligar o {LlmRuntime.Name} sozinho";
+    public string AutoLmBody => $"Se o {LlmRuntime.Name} estiver parado quando o Noc abrir, ele é iniciado automaticamente.";
+    public string KeepLmTitle => $"Manter o {LlmRuntime.Name} no ar";
+    public string ImportBody => LlmRuntime.IsOllama
+        ? "Vale para o LM Studio. No Ollama, os modelos entram com \"ollama pull\" e aparecem aqui sozinhos."
+        : "GGUFs que aparecerem em Downloads entram no LM Studio automaticamente (sem mover o arquivo).";
     public string LmDetail { get => _lmDetail; set => Set(ref _lmDetail, value); }
     private Brush _lmColor = Brushes.Gray;
     public Brush LmColor { get => _lmColor; set => Set(ref _lmColor, value); }
@@ -200,22 +210,22 @@ public sealed partial class MainViewModel : Observable
         switch (probe.State)
         {
             case LmState.Running:
-                LmTitle = "LM Studio ativo";
-                LmDetail = $"{probe.Models.Count(m => m.Type == "llm")} modelos de conversa · porta {(_host.Settings.LmStudioPort > 0 ? _host.Settings.LmStudioPort : LmStudioLocator.ConfiguredPort())}";
+                LmTitle = $"{LlmRuntime.Name} ativo";
+                LmDetail = $"{probe.Models.Count(m => m.Type == "llm")} modelos de conversa · porta {(_host.Settings.LmStudioPort > 0 ? _host.Settings.LmStudioPort : LlmRuntime.ConfiguredPort())}";
                 LmColor = B("Ok");
                 break;
             case LmState.Stopped:
-                LmTitle = "LM Studio parado";
-                LmDetail = "O servidor local do LM Studio está desligado.";
+                LmTitle = $"{LlmRuntime.Name} parado";
+                LmDetail = $"O servidor local do {LlmRuntime.Name} está desligado.";
                 LmColor = B("Warn");
                 break;
             case LmState.NotInstalled:
-                LmTitle = "LM Studio não encontrado";
-                LmDetail = "Instale o LM Studio e baixe um modelo.";
+                LmTitle = $"{LlmRuntime.Name} não encontrado";
+                LmDetail = $"Instale o {LlmRuntime.Name} e baixe um modelo.";
                 LmColor = B("Err");
                 break;
             default:
-                LmTitle = "Procurando o LM Studio…";
+                LmTitle = $"Procurando o {LlmRuntime.Name}…";
                 LmDetail = "";
                 LmColor = B("Text3");
                 break;
@@ -311,8 +321,8 @@ public sealed partial class MainViewModel : Observable
 
         Headline = probe.State switch
         {
-            LmState.NotInstalled => "Falta instalar o LM Studio.",
-            LmState.Stopped => "O LM Studio está parado.",
+            LmState.NotInstalled => $"Falta instalar o {LlmRuntime.Name}.",
+            LmState.Stopped => $"O {LlmRuntime.Name} está parado.",
             _ when Generating => "Respondendo ao seu celular.",
             _ when _host.Devices.Active.Count == 0 => "Pareie seu celular para começar.",
             _ when _host.Relay.State == RelayState.Offline => "Funcionando só na rede local.",

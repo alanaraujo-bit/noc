@@ -591,7 +591,7 @@ public sealed class JobManager : IDisposable
             var running = _jobs.Values.Where(j => !j.IsFinished && j.State != JobState.Queued).ToList();
             var runningModel = running.FirstOrDefault()?.Model;
             // a GPU é uma só: uma imagem roda sozinha (nada em paralelo com ela)
-            var slots = _paused ? 0 : runningModel is not null && IsImageModel(runningModel) ? 0 : MaxParallelSameModel - running.Count;
+            var slots = _paused ? 0 : runningModel is not null && IsImageModel(runningModel) ? 0 : Math.Min(MaxParallelSameModel, LlmRuntime.MaxParallel) - running.Count;
             foreach (var j in _queue.ToList())
             {
                 if (j.Background && !j.IsImage)
@@ -681,7 +681,7 @@ public sealed class JobManager : IDisposable
             Changed?.Invoke();
             Log?.Invoke($"Gerando com {_models.DisplayName(job.Model)}", "task");
 
-            await foreach (var d in _lm.StreamChatAsync(request, ct))
+            await foreach (var d in _lm.StreamChatAsync(request, ct, ctx))
             {
                 if (d.Reasoning is not null || d.Content is not null)
                 {
@@ -728,7 +728,7 @@ public sealed class JobManager : IDisposable
                 return;
             reason = "error";
             errorCode = "lm_unreachable";
-            errorMsg = "O LM Studio parou de responder no meio da resposta.";
+            errorMsg = $"O {LlmRuntime.Name} parou de responder no meio da resposta.";
         }
         catch (Exception e)
         {
@@ -909,7 +909,7 @@ public sealed class JobManager : IDisposable
             probe = await _models.RefreshAsync(ct);
             if (probe.State == LmState.Running) return;
         }
-        throw new LmStudioException("lm_offline_final", "O LM Studio não voltou a funcionar no PC.");
+        throw new LmStudioException("lm_offline_final", $"O {LlmRuntime.Name} não voltou a funcionar no PC.");
     }
 
     /// <summary>Alguma tarefa esperando o LM Studio voltar (o monitor de saúde pode religá-lo sem atrapalhar nada).</summary>

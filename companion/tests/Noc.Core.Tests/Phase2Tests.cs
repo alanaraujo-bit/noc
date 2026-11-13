@@ -115,6 +115,21 @@ public class Phase2Tests(ITestOutputHelper log)
             log.WriteLine($"{m["name"]} | {m["technical"]} | tier={m["tier"]} vision={m["vision"]} reasoning={m["reasoning"]!.ToJsonString()} fits={m["fitsGpu"]}");
         var status = (await p.Client.CallAsync("status"))["r"]!.AsObject();
         log.WriteLine("perfis: " + status["tiers"]!.ToJsonString());
+        if (Noc.Core.LmStudio.LlmRuntime.IsOllama)
+        {
+            // Ollama: os modelos são os que estiverem instalados; todo perfil aponta para um modelo de conversa existente,
+            // modelos de embedding/autocompletar não entram, e o plano usa o contexto do próprio modelo.
+            var llms = models.Where(m => m["type"]!.GetValue<string>() == "llm").ToList();
+            Assert.NotEmpty(llms);
+            foreach (var t in Tiers.All)
+                Assert.Contains(llms, m => m["key"]!.GetValue<string>() == status["tiers"]![t]!["model"]!.GetValue<string>());
+            Assert.Equal("ollama", status["lm"]!["runtime"]!.GetValue<string>());
+            var deepPlan = (await p.Client.CallAsync("models.plan", new JsonObject { ["model"] = "tier:deep" }))["r"]!.AsObject();
+            log.WriteLine("plano profundo: " + deepPlan.ToJsonString());
+            Assert.True(deepPlan["fits"]!.GetValue<bool>());
+            Assert.Equal(p.Host.Models.Find(p.Host.Catalog.ModelForTier(Tiers.Deep)!)!.DefaultContext, deepPlan["context"]!.GetValue<int>());
+            return;
+        }
         Assert.Contains(models, m => m["name"]!.GetValue<string>() == "Qwen 3.5 9B" && m["vision"]!.GetValue<bool>());
         Assert.Contains(models, m => m["name"]!.GetValue<string>() == "Gemma 4 26B-A4B" && m["vision"]!.GetValue<bool>());
         Assert.Equal("qwen3.5-9b-abliterated-vision", status["tiers"]!["fast"]!["model"]!.GetValue<string>());
@@ -149,7 +164,7 @@ public class Phase2Tests(ITestOutputHelper log)
         Assert.Equal("", reasoning); // perfil Rápido desliga o raciocínio
         Assert.Contains("preparing", phases);
         Assert.Contains("generating", phases);
-        Assert.Equal("qwen3.5-9b-abliterated-vision", end["model"]!.GetValue<string>());
+        Assert.Equal(p.Host.Catalog.ModelForTier(Tiers.Fast), end["model"]!.GetValue<string>());
 
         // a mesma tarefa reenviada (queda de rede) não gera outra resposta
         var again = await p.Client.CallAsync("chat.start", new JsonObject
@@ -167,6 +182,8 @@ public class Phase2Tests(ITestOutputHelper log)
     {
         if (!Enabled) return;
         await using var p = await PairedAsync();
+        // precisa de dois modelos diferentes nos perfis (com um só, não há troca para disputar)
+        if (p.Host.Catalog.ModelForTier(Tiers.Fast) == p.Host.Catalog.ModelForTier(Tiers.Smart)) return;
         // aquece o Rápido
         var warm = Guid.NewGuid().ToString();
         await p.Client.CallAsync("chat.start", new JsonObject
@@ -251,6 +268,8 @@ public class Phase2Tests(ITestOutputHelper log)
     {
         if (!Enabled) return;
         await using var p = await PairedAsync();
+        // só faz sentido quando o perfil Profundo é um modelo sem visão
+        if (p.Host.Models.Find(p.Host.Catalog.ModelForTier(Tiers.Deep)!)?.Vision != false) return;
         var png = File.ReadAllBytes(Path.Combine(Fixtures, "vision.png"));
         var hash = Convert.ToHexString(SHA256.HashData(png)).ToLowerInvariant();
         await p.Client.CallAsync("blob.put", new JsonObject { ["hash"] = hash, ["total"] = png.Length, ["offset"] = 0, ["data"] = Convert.ToBase64String(png) });
@@ -385,7 +404,8 @@ public class Phase2Tests(ITestOutputHelper log)
         var (_, _, endA, _) = await Collect(p.Client, a);
         Assert.Equal("stop", endA["reason"]!.GetValue<string>());
         // o modelo profundo nunca chegou a ser carregado
-        Assert.False(p.Host.Models.Find("qwen3.8-27b-uncensored@q4_k_m")!.Loaded);
+        var deep = p.Host.Catalog.ModelForTier(Tiers.Deep)!;
+        if (deep != p.Host.Catalog.ModelForTier(Tiers.Fast)) Assert.False(p.Host.Models.Find(deep)!.Loaded);
     }
 
     [Fact]
@@ -393,6 +413,10 @@ public class Phase2Tests(ITestOutputHelper log)
     {
         if (!Enabled) return;
         await using var p = await PairedAsync();
+        var fastKey = p.Host.Catalog.ModelForTier(Tiers.Fast)!;
+        // outro modelo de conversa, diferente do Rápido (sem um segundo modelo não há o que trocar)
+        var otherKey = p.Host.Models.Last.Models.FirstOrDefault(m => m.Type == "llm" && m.Key != fastKey)?.Key;
+        if (otherKey is null) return;
         var warm = Guid.NewGuid().ToString();
         await p.Client.CallAsync("chat.start", new JsonObject
         {
@@ -403,14 +427,14 @@ public class Phase2Tests(ITestOutputHelper log)
         var title = Guid.NewGuid().ToString();
         await p.Client.CallAsync("chat.start", new JsonObject
         {
-            ["job"] = title, ["model"] = "gemma4-26b-a4b-uncensored", ["background"] = true,
+            ["job"] = title, ["model"] = otherKey, ["background"] = true,
             ["messages"] = new JsonArray(UserText("Crie um título curto para: conversa sobre redes.")),
             ["params"] = new JsonObject { ["max_tokens"] = 16, ["reasoning"] = "off" },
         });
         var (_, _, end, events) = await Collect(p.Client, title);
         Assert.DoesNotContain(events, e => e["phase"]?.GetValue<string>() == "loading");
-        Assert.Equal("qwen3.5-9b-abliterated-vision", end["model"]!.GetValue<string>());
-        Assert.False(p.Host.Models.Find("gemma4-26b-a4b-uncensored")!.Loaded);
+        Assert.Equal(fastKey, end["model"]!.GetValue<string>());
+        Assert.False(p.Host.Models.Find(otherKey)!.Loaded);
     }
 
     private static async Task Lms(string args)
@@ -439,7 +463,7 @@ public class Phase2Tests(ITestOutputHelper log)
     [InlineData("unload")]
     public async Task Generation_survives_lm_studio_failure_midway(string what)
     {
-        if (!Enabled) return;
+        if (!Enabled || Noc.Core.LmStudio.LlmRuntime.IsOllama) return; // derruba o servidor com o `lms` (só LM Studio)
         await using var p = await PairedAsync();
         p.Host.Settings.KeepLmServerAlive = true;
         p.Host.Settings.AutoStartLmServer = true;
@@ -469,7 +493,7 @@ public class Phase2Tests(ITestOutputHelper log)
     [Fact]
     public async Task Cold_boot_with_lm_studio_down_resumes_tasks()
     {
-        if (!Enabled) return;
+        if (!Enabled || Noc.Core.LmStudio.LlmRuntime.IsOllama) return; // desliga o servidor com o `lms` (só LM Studio)
         using var device = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var p = await PairedAsync(device: device);
         var root = AppPaths.Root;

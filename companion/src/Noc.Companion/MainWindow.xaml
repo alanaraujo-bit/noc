@@ -198,19 +198,19 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- LM Studio -->
+                        <!-- Motor de IA (LM Studio ou Ollama) -->
                         <Border Style="{StaticResource Tile}" Grid.Row="0" Grid.Column="0">
                             <StackPanel>
-                                <TextBlock Text="LM STUDIO" Style="{StaticResource Label}"/>
+                                <TextBlock Text="{Binding RuntimeLabel}" Style="{StaticResource Label}"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                     <Ellipse Style="{StaticResource Dot}" Fill="{Binding LmColor}"/>
                                     <TextBlock Text="{Binding LmTitle}" Style="{StaticResource Title}" Margin="10,0,0,0"/>
                                 </StackPanel>
                                 <TextBlock Text="{Binding LmDetail}" Style="{StaticResource Body}" Margin="18,4,0,0"/>
                                 <StackPanel Orientation="Horizontal" Margin="12,10,0,0">
-                                    <Button Style="{StaticResource Secondary}" Content="Iniciar LM Studio" Height="34" Command="{Binding StartLm}"
+                                    <Button Style="{StaticResource Secondary}" Content="{Binding StartLmText}" Height="34" Command="{Binding StartLm}"
                                             Visibility="{Binding LmStopped, Converter={StaticResource Vis}}"/>
-                                    <Button Style="{StaticResource Ghost}" Content="Abrir LM Studio" Command="{Binding OpenLmStudio}"/>
+                                    <Button Style="{StaticResource Ghost}" Content="{Binding OpenLmText}" Command="{Binding OpenLmStudio}"/>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
@@ -644,8 +644,8 @@
                             <Border Style="{StaticResource SettingRow}">
                                 <Grid>
                                     <StackPanel Margin="0,0,70,0">
-                                        <TextBlock Text="Ligar o servidor do LM Studio sozinho" Style="{StaticResource Title}"/>
-                                        <TextBlock Text="Se o LM Studio estiver parado quando o Noc abrir, ele é iniciado automaticamente." Style="{StaticResource Body}"/>
+                                        <TextBlock Text="{Binding AutoLmTitle}" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="{Binding AutoLmBody}" Style="{StaticResource Body}"/>
                                     </StackPanel>
                                     <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetAutoLm}"/>
                                 </Grid>
@@ -672,7 +672,7 @@
                                 <Grid>
                                     <StackPanel Margin="0,0,70,0">
                                         <TextBlock Text="Adicionar modelos sozinho" Style="{StaticResource Title}"/>
-                                        <TextBlock Text="GGUFs que aparecerem em Downloads entram no LM Studio automaticamente (sem mover o arquivo)." Style="{StaticResource Body}"/>
+                                        <TextBlock Text="{Binding ImportBody}" Style="{StaticResource Body}"/>
                                     </StackPanel>
                                     <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetAutoImport}"/>
                                 </Grid>
@@ -689,7 +689,7 @@
                             <Border Style="{StaticResource SettingRow}">
                                 <Grid>
                                     <StackPanel Margin="0,0,70,0">
-                                        <TextBlock Text="Manter o LM Studio no ar" Style="{StaticResource Title}"/>
+                                        <TextBlock Text="{Binding KeepLmTitle}" Style="{StaticResource Title}"/>
                                         <TextBlock Text="Se o servidor cair, o Noc liga de novo (nunca no meio de uma resposta)." Style="{StaticResource Body}"/>
                                     </StackPanel>
                                     <CheckBox Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding SetKeepLm}"/>

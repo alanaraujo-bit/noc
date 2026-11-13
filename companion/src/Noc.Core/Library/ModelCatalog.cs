@@ -293,7 +293,8 @@ public sealed class ModelCatalog
     {
         var cacheKey = $"{m.Key}|{m.SizeBytes}|{context}";
         lock (_lock) if (Data.Estimates.TryGetValue(cacheKey, out var v)) return v;
-        if (!File.Exists(LmStudioLocator.LmsPath)) return null;
+        // a estimativa vem do `lms`; no Ollama quem decide o que cabe na GPU é o próprio servidor
+        if (LlmRuntime.IsOllama || !File.Exists(LmStudioLocator.LmsPath)) return null;
         await EstimateGate.WaitAsync(ct);
         try
         {

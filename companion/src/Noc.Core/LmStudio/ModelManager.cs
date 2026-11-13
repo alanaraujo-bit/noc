@@ -124,6 +124,15 @@ public sealed class ModelManager
     public async Task<LoadPlan> PlanAsync(LmModel model, string? tier, int? forcedContext, CancellationToken ct)
     {
         var (total, other) = await VramPictureAsync(ct);
+        if (LlmRuntime.IsOllama)
+        {
+            // No Ollama o contexto é o do próprio modelo (num_ctx do perfil) ou o padrão do servidor: é o mesmo que o
+            // editor, o agente e o chat do PC usam, então ninguém obriga o Ollama a recarregar o modelo ao trocar de
+            // programa. Só muda se o usuário fixou um contexto no modo avançado. Quem divide a VRAM é o próprio Ollama.
+            var want = forcedContext ?? _catalog.Prefs(model.Key).Context ?? model.DefaultContext;
+            if (want > 0 && model.MaxContext > 0) want = Math.Min(want, model.MaxContext);
+            return new LoadPlan(Math.Max(0, want), 1, null, null, null, true, null) { OtherGiB = total > 0 ? other : null };
+        }
         if (!_settings.SingleModel)
         {
             // os outros continuam carregados: contam como ocupados
@@ -147,7 +156,7 @@ public sealed class ModelManager
     public async Task<(string InstanceId, int Context)> EnsureLoadedAsync(string key, int? contextLength, CancellationToken ct, string? tier = null)
     {
         var probe = await RefreshAsync(ct);
-        if (probe.State != LmState.Running) throw new LmStudioException("lm_offline", "O LM Studio não está em execução");
+        if (probe.State != LmState.Running) throw new LmStudioException("lm_offline", $"O {LlmRuntime.Name} não está em execução");
         var model = probe.Models.FirstOrDefault(m => m.Key == key)
                     ?? throw new LmStudioException("model_not_found", "Este modelo não está mais no PC");
         if (model.Type != "llm") throw new LmStudioException("not_llm", "Este modelo não é de conversa");
@@ -315,17 +324,19 @@ public sealed class ModelManager
         var m = raw.ToLowerInvariant();
         if (LooksLikeOutOfMemory(raw)) return "Memória de vídeo (VRAM) insuficiente para este modelo agora.";
         if (m.Contains("hyperparameters") || m.Contains("unknown model architecture") || m.Contains("wrong array length") || m.Contains("unknown architecture"))
-            return "O arquivo deste modelo está num formato que o LM Studio instalado não reconhece.";
+            return $"O arquivo deste modelo está num formato que o {LlmRuntime.Name} instalado não reconhece.";
+        if (m.Contains("does not support chat")) return "Este modelo não é de conversa.";
         if (m.Contains("tensor") && (m.Contains("bounds") || m.Contains("missing") || m.Contains("wrong number")))
             return "O arquivo do modelo parece incompleto ou corrompido.";
         if (m.Contains("eof") || m.Contains("corrupt") || m.Contains("truncated")) return "O arquivo do modelo parece incompleto ou corrompido.";
         if (m.Contains("mmproj") || m.Contains("clip")) return "O componente de visão deste modelo não carregou.";
         if (m.Contains("no such file") || m.Contains("not found") || m.Contains("does not exist")) return "O arquivo do modelo não foi encontrado.";
-        if (m.Contains("lm studio não") || m.Contains("connection refused") || m.Contains("unreachable")) return "O LM Studio não está respondendo.";
+        if (m.Contains("lm studio não") || m.Contains("ollama não") || m.Contains("connection refused") || m.Contains("unreachable") || m.Contains("recusou"))
+            return $"O {LlmRuntime.Name} não está respondendo.";
         return GenericLoadError;
     }
 
-    public const string GenericLoadError = "O LM Studio não conseguiu carregar este modelo.";
+    public static string GenericLoadError => $"O {LlmRuntime.Name} não conseguiu carregar este modelo.";
 
     /// <summary>Último erro técnico (para a área de diagnóstico).</summary>
     public string? LastRawError { get; private set; }

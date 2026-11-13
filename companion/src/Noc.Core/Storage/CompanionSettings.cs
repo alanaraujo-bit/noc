@@ -12,7 +12,9 @@ public sealed class CompanionSettings
     public bool RemoteEnabled { get; set; } = true;
     public bool LanEnabled { get; set; } = true;
     public int LanPort { get; set; } = 47821;
-    /// <summary>Porta do LM Studio. 0 = ler do config do LM Studio.</summary>
+    /// <summary>Motor de IA: "auto" (o que estiver instalado), "lmstudio" ou "ollama".</summary>
+    public string Backend { get; set; } = "auto";
+    /// <summary>Porta do motor de IA (LM Studio ou Ollama). 0 = ler da configuração dele.</summary>
     public int LmStudioPort { get; set; }
     /// <summary>Ao carregar um modelo pelo celular, descarregar os outros antes (evita estourar a VRAM).</summary>
     public bool SingleModel { get; set; } = true;

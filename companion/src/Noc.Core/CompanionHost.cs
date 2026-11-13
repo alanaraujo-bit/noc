@@ -70,7 +70,8 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
     {
         Settings = CompanionSettings.Load();
         Identity = PcIdentity.LoadOrCreate();
-        Lm = new LmStudioClient(() => Settings.LmStudioPort > 0 ? Settings.LmStudioPort : LmStudioLocator.ConfiguredPort());
+        LlmRuntime.Use(Settings.Backend);
+        Lm = new LmStudioClient(() => Settings.LmStudioPort > 0 ? Settings.LmStudioPort : LlmRuntime.ConfiguredPort());
         Catalog = new ModelCatalog();
         // Enquanto a voz não está carregada, reserva a VRAM dela para o modelo não ocupar tudo.
         Models = new ModelManager(Lm, Settings, Catalog, Gpu, () => Settings.VoiceEnabled && !Stt.Ready ? 1.3 : 0);
@@ -158,7 +159,7 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
         Task? lmStart = null;
         if (probe.State == LmState.Stopped && Settings.AutoStartLmServer)
         {
-            Activity("Iniciando o servidor do LM Studio…", "lm");
+            Activity($"Iniciando o {LlmRuntime.Name}…", "lm");
             lmStart = StartLmServerAsync(_cts.Token);
         }
         if (Settings.LanEnabled) await Lan.StartAsync(Settings.LanPort);
@@ -179,7 +180,8 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
                 // ordem importa para a VRAM: primeiro a voz (pequena), depois o modelo padrão
                 if (Settings.VoiceEnabled) await Stt.EnsureReadyAsync(_cts.Token);
                 await PreloadAsync();
-                if (Settings.AutoImportModels)
+                // a importação de GGUFs é para a biblioteca do LM Studio; no Ollama os modelos entram por `ollama pull`/`ollama create`
+                if (Settings.AutoImportModels && !LlmRuntime.IsOllama)
                 {
                     Library.Watch();
                     await Library.ScanAndImportAsync(_cts.Token);
@@ -217,8 +219,8 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
             var probe = await Models.RefreshAsync(_cts.Token);
             if (probe.State != _lastLmState)
             {
-                if (probe.State == LmState.Running && _lastLmState != LmState.Unknown) Activity("O LM Studio voltou a responder", "lm");
-                else if (_lastLmState == LmState.Running) Activity("O LM Studio parou de responder", "warn");
+                if (probe.State == LmState.Running && _lastLmState != LmState.Unknown) Activity($"O {LlmRuntime.Name} voltou a responder", "lm");
+                else if (_lastLmState == LmState.Running) Activity($"O {LlmRuntime.Name} parou de responder", "warn");
                 _lastLmState = probe.State;
             }
             // Só religa quando o servidor está de fato fora (porta fechada), ou travado há 2 min sem nada rodando.
@@ -228,15 +230,15 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
             // servidor parado (porta fechada) não está atendendo ninguém: religar não atrapalha nada
             if ((probe.State == LmState.Stopped || (hung && idle)) && Settings.KeepLmServerAlive && Settings.AutoStartLmServer)
             {
-                if (hung) Diag.Write("lm", "LM Studio sem responder há 2 min; religando o servidor");
+                if (hung) Diag.Write("lm", $"{LlmRuntime.Name} sem responder há 2 min; religando o servidor");
                 // espera crescente entre tentativas (30 s, 60 s, 120 s… até 10 min)
                 var wait = TimeSpan.FromSeconds(Math.Min(600, 30 * Math.Pow(2, Math.Min(5, _lmRestartFailures))));
                 if (DateTimeOffset.Now - _lastLmRestart > wait)
                 {
                     _lastLmRestart = DateTimeOffset.Now;
-                    Activity("Religando o servidor do LM Studio…", "lm");
+                    Activity($"Religando o {LlmRuntime.Name}…", "lm");
                     var (ok, _) = await StartLmServerAsync(_cts.Token);
-                    Diag.Write("lm", ok ? "servidor do LM Studio religado" : "falha ao religar o servidor do LM Studio");
+                    Diag.Write("lm", ok ? $"{LlmRuntime.Name} religado" : $"falha ao religar o {LlmRuntime.Name}");
                     _lmRestartFailures = ok ? 0 : _lmRestartFailures + 1;
                     if (ok) _preloadDone = false;
                 }
@@ -392,6 +394,7 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
                 },
                 ["error"] = probe.State == LmState.Running ? null : probe.Error,
                 ["llms"] = probe.Models.Count(m => m.Type == "llm"),
+                ["runtime"] = LlmRuntime.Id, ["runtimeName"] = LlmRuntime.Name,
             },
             ["loaded"] = loaded,
             ["op"] = Models.Op == ModelOpState.Idle ? null : new JsonObject
@@ -501,19 +504,19 @@ public sealed class CompanionHost : ISessionHost, IAsyncDisposable
 
     public async Task<(bool Ok, string Output)> StartLmServerAsync(CancellationToken ct)
     {
-        var (ok, output) = await LmStudioLocator.StartServerAsync(ct);
+        var (ok, output) = await LlmRuntime.StartServerAsync(ct);
         for (var i = 0; i < 20 && ok; i++)
         {
             var probe = await Models.RefreshAsync(ct);
             if (probe.State == LmState.Running)
             {
-                Activity("Servidor do LM Studio ativo", "lm");
+                Activity($"{LlmRuntime.Name} ativo", "lm");
                 return (true, output);
             }
             await Task.Delay(500, ct);
         }
-        Activity("Não foi possível iniciar o LM Studio", "error");
-        return (false, string.IsNullOrWhiteSpace(output) ? "O LM Studio não respondeu" : output);
+        Activity($"Não foi possível iniciar o {LlmRuntime.Name}", "error");
+        return (false, string.IsNullOrWhiteSpace(output) ? $"O {LlmRuntime.Name} não respondeu" : output);
     }
 
     // ---------------- sessões ----------------

@@ -22,7 +22,9 @@ public sealed record LmModel(
     bool ToolUse,
     string[] ReasoningOptions,
     string? ReasoningDefault,
-    IReadOnlyList<LmInstance> Instances)
+    IReadOnlyList<LmInstance> Instances,
+    // Contexto com que o modelo carrega por padrão (Ollama: num_ctx do perfil ou do servidor). 0 = desconhecido.
+    int DefaultContext = 0)
 {
     public bool Loaded => Instances.Count > 0;
 }
@@ -55,12 +57,17 @@ public sealed class LmStudioClient : IDisposable
         var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5), ConnectTimeout = TimeSpan.FromSeconds(3) };
         _http = new HttpClient(handler, disposeHandler: false) { Timeout = TimeSpan.FromMinutes(10) };
         _stream = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        _ollama = new OllamaBackend(_http, _stream, port);
     }
+
+    /// <summary>As mesmas operações na API do Ollama, usadas quando ele é o motor (ver <see cref="LlmRuntime"/>).</summary>
+    private readonly OllamaBackend _ollama;
 
     private Uri Url(string path) => new($"http://127.0.0.1:{_port()}{path}");
 
     public async Task<LmProbe> ProbeAsync(CancellationToken ct = default)
     {
+        if (LlmRuntime.IsOllama) return await _ollama.ProbeAsync(ct);
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -118,6 +125,7 @@ public sealed class LmStudioClient : IDisposable
     public async Task<(string InstanceId, double Seconds, int Context)> LoadAsync(string key, int contextLength, CancellationToken ct,
         int? parallel = null, bool? mtp = null)
     {
+        if (LlmRuntime.IsOllama) return await _ollama.LoadAsync(key, contextLength, ct);
         var body = new JsonObject
         {
             ["model"] = key,
@@ -139,13 +147,19 @@ public sealed class LmStudioClient : IDisposable
 
     public async Task UnloadAsync(string instanceId, CancellationToken ct)
     {
+        if (LlmRuntime.IsOllama) { await _ollama.UnloadAsync(instanceId, ct); return; }
         using var res = await _http.PostAsync(Url("/api/v1/models/unload"), Json(new JsonObject { ["instance_id"] = instanceId }), ct);
         if (!res.IsSuccessStatusCode) throw new LmStudioException("unload_failed", ExtractError(await res.Content.ReadAsStringAsync(ct)));
     }
 
     /// <summary>Streaming SSE de /v1/chat/completions. Cancelar o token interrompe a geração no LM Studio.</summary>
-    public async IAsyncEnumerable<ChatDelta> StreamChatAsync(JsonObject request, [EnumeratorCancellation] CancellationToken ct)
+    public async IAsyncEnumerable<ChatDelta> StreamChatAsync(JsonObject request, [EnumeratorCancellation] CancellationToken ct, int contextLength = 0)
     {
+        if (LlmRuntime.IsOllama)
+        {
+            await foreach (var d in _ollama.StreamChatAsync(request, contextLength, ct)) yield return d;
+            yield break;
+        }
         request["stream"] = true;
         request["stream_options"] = new JsonObject { ["include_usage"] = true };
         using var msg = new HttpRequestMessage(HttpMethod.Post, Url("/v1/chat/completions")) { Content = Json(request) };
@@ -193,7 +207,7 @@ public sealed class LmStudioClient : IDisposable
     public static async Task<Dictionary<string, string>> ListPathsAsync(CancellationToken ct)
     {
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (!File.Exists(LmStudioLocator.LmsPath)) return map;
+        if (LlmRuntime.IsOllama || !File.Exists(LmStudioLocator.LmsPath)) return map;
         var psi = new ProcessStartInfo(LmStudioLocator.LmsPath, "ls --json")
         {
             CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
