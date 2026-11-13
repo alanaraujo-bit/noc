@@ -6,4 +6,5 @@ Encaminhador sem estado persistente entre o celular e o Noc Companion. Só vê b
 - **Exatamente 1 réplica**: o registro dos PCs online fica em memória (a conexão de controle do PC e a do
   celular precisam cair na mesma instância). Região `us-east4` (a mais próxima do Brasil).
 - Rodar localmente: `PORT=8080 node server.js` · Testes: `node test.js` (ou `RELAY=wss://... node test.js`).
-- Publicar: `railway up --detach` nesta pasta.
+- Publicar: o serviço está ligado ao GitHub (branch `main`, pasta `/relay`): um push que mexa em `relay/**` publica sozinho.
+  Sem isso, `railway up --detach` nesta pasta.

@@ -304,5 +304,9 @@ PC novo (i5-14600K, RTX 3090 Ti 24 GB) sem LM Studio: os modelos rodam no Ollama
   (pareamento+chat, perfis, fila/cancelamento, imagem por blob, retomada após reinício, tarefa terminada persistida, catálogo) e
   6 saem cedo por pedirem dois modelos diferentes ou o `lms`.
 - NÃO testado: queda do Ollama no meio da geração (o código de recuperação é o mesmo do LM Studio; muda só o comando de religar),
-  relay (o projeto `noc-relay` não existe mais no Railway: `noc-relay-production.up.railway.app` responde 404), app Android real.
+  app Android real.
+- Relay recriado no Railway em 2026-11-13 (o projeto antigo tinha sido apagado): projeto `noc-relay`, serviço ligado ao GitHub
+  (`main`, pasta `/relay`, só reconstrói quando `relay/**` muda), 1 réplica em us-east4, mesmo endereço de antes
+  (`wss://noc-relay-production.up.railway.app`). Teste `Relay_stream_resume_cancel_and_revoke` com o Ollama: passou
+  (pareamento, streaming a 96,9 tok/s, retomada, cancelamento e revogação pelo relay).
 - App Android: sem mudanças; os textos ainda dizem "LM Studio".
