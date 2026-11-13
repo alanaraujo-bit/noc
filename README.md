@@ -19,18 +19,18 @@ Baixe na página de [**Releases**](https://github.com/alanaraujo-bit/noc/release
 
 | Arquivo | Para quê |
 |---|---|
-| `Noc-Companion-Setup-1.3.0.exe` | Instalador do Companion para Windows 10/11 (64 bits). Não precisa do .NET instalado. |
-| `Noc-1.3.0.apk` | App Android 8.0+ (instale direto no celular; atualiza as versões anteriores sem perder conversas nem criações). |
+| `Noc-Companion-Setup-1.4.0.exe` | Instalador do Companion para Windows 10/11 (64 bits). Não precisa do .NET instalado. |
+| `Noc-1.4.0.apk` | App Android 8.0+ (instale direto no celular; atualiza as versões anteriores sem perder conversas nem criações). |
 
 ## Como começar (5 minutos)
 
 **No PC**
 1. Instale o [LM Studio](https://lmstudio.ai) e baixe um modelo de conversa (ex.: Qwen, Llama, Gemma).
-2. Rode o `Noc-Companion-Setup-1.3.0.exe`. Na pergunta de instalação, prefira "para todos os usuários", porque isso cria a regra de firewall para a conexão direta na Wi-Fi.
+2. Rode o `Noc-Companion-Setup-1.4.0.exe`. Na pergunta de instalação, prefira "para todos os usuários", porque isso cria a regra de firewall para a conexão direta na Wi-Fi.
 3. O Companion abre sozinho, encontra o LM Studio e liga o servidor dele se precisar. Ele também inicia junto com o Windows.
 
 **No Android**
-1. Baixe o `Noc-1.3.0.apk` no celular e abra o arquivo. O Android vai pedir para permitir "instalar apps desta fonte"; permita para o navegador ou gerenciador de arquivos que você usou.
+1. Baixe o `Noc-1.4.0.apk` no celular e abra o arquivo. O Android vai pedir para permitir "instalar apps desta fonte"; permita para o navegador ou gerenciador de arquivos que você usou.
 2. Abra o Noc e siga a apresentação.
 3. No PC, clique em **Parear celular** e aponte a câmera para o QR Code. Sem câmera, use a aba **Código**: digite o código no celular e confirme no PC o número de verificação.
 4. O app testa a conexão e mostra a primeira resposta do seu modelo. Pronto.
