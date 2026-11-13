@@ -37,6 +37,18 @@ Baixe na página de [**Releases**](https://github.com/alanaraujo-bit/noc/release
 
 Depois do primeiro pareamento não há mais nada para configurar. Deixe o PC ligado e o Noc cuida do resto.
 
+## LM Studio ou Ollama
+
+O Companion funciona com os dois motores. Por padrão ele usa o que estiver instalado (com os dois, o LM Studio);
+para escolher, ajuste `"Backend"` em `%LOCALAPPDATA%\Noc\settings.json` para `"ollama"`, `"lmstudio"` ou `"auto"`.
+
+Com o **Ollama**:
+- Os modelos são os do `ollama list`. Embeddings e modelos só de autocompletar não aparecem como conversa, e um perfil
+  criado com `FROM modelo` + parâmetros aparece no lugar do modelo base (é o mesmo arquivo).
+- O contexto é o do próprio modelo (`num_ctx` do perfil) ou o padrão do servidor (`OLLAMA_CONTEXT_LENGTH`). É o mesmo que
+  editor, agente e chat do PC usam, então o modelo não é recarregado ao alternar entre o celular e o computador.
+- O Companion liga o Ollama se ele estiver parado e respeita `OLLAMA_NUM_PARALLEL` na fila.
+- A importação automática de GGUFs da pasta Downloads vale só para o LM Studio (no Ollama: `ollama pull` / `ollama create`).
 ## O que o app faz
 
 - **Chat completo**: streaming em tempo real, Markdown (tabelas, listas, citações), código com destaque de sintaxe e botão copiar por bloco, fórmulas LaTeX legíveis, e o raciocínio do modelo em um bloco recolhível.

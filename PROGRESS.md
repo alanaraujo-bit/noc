@@ -290,3 +290,19 @@ Testes com o APK de release (R8, com.noc.app 1.1.0) pareado ao Companion 1.1.0 i
 - APK release (R8) 1.3.0 instalado por cima do 1.1.0 no emulador: migrações Room 2→3→4 sem perdas; pareado por código
   (SAS 317 232 nos dois lados); Pony V6 pelo Companion instalado em 31 s; variação (ImageEdit sob R8) ok.
 - Artefatos: dist/Noc-Companion-Setup-1.3.0.exe, dist/Noc-1.3.0.apk (não publicados no GitHub: decisão do usuário).
+
+---
+# Motor Ollama — Companion 1.4.0 (2026-11-13)
+PC novo (i5-14600K, RTX 3090 Ti 24 GB) sem LM Studio: os modelos rodam no Ollama do laboratório local (`C:\Users\Alan\ai-lab`).
+- `LmStudio/OllamaClient.cs`: `LlmRuntime` (motor em uso), `OllamaLocator` e `OllamaBackend` (API nativa do Ollama). O resto do
+  Companion continua usando `LmStudioClient`/`LmModel`; o protocolo com o celular não mudou (o status ganhou `lm.runtime`).
+- Decisões: contexto = o do modelo/servidor (nunca força recarga); modelo base escondido quando existe um perfil em cima dele;
+  fila limitada por `OLLAMA_NUM_PARALLEL`; erro 4xx do Ollama não entra em recuperação automática.
+- Medido aqui: perfil `lab-agent` (Qwen 3.8 27B, 64k) responde pelo protocolo do Noc com 1º token em ~160–220 ms; visão por blob ok;
+  com agente + autocomplete + embeddings + Whisper a GPU fica em 24,1 de 24,6 GB (tudo na GPU, sem folga).
+- Testes (NOC_E2E=1, NOC_BACKEND=ollama): 83 unitários; ponta a ponta 13/13, dos quais 7 exercitam o Ollama de verdade
+  (pareamento+chat, perfis, fila/cancelamento, imagem por blob, retomada após reinício, tarefa terminada persistida, catálogo) e
+  6 saem cedo por pedirem dois modelos diferentes ou o `lms`.
+- NÃO testado: queda do Ollama no meio da geração (o código de recuperação é o mesmo do LM Studio; muda só o comando de religar),
+  relay (o projeto `noc-relay` não existe mais no Railway: `noc-relay-production.up.railway.app` responde 404), app Android real.
+- App Android: sem mudanças; os textos ainda dizem "LM Studio".
