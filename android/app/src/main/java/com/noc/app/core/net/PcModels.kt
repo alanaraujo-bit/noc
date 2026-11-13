@@ -113,6 +113,14 @@ data class LastRun(val model: String, val name: String, val tps: Double?, val tt
 
 enum class LmState { RUNNING, STOPPED, NOT_INSTALLED, UNKNOWN }
 
+/**
+ * Motor de IA do PC conectado ("LM Studio" ou "Ollama"), como o Companion informa em status.lm.runtimeName.
+ * Companions antigos não informam: fica "LM Studio", que era o único motor.
+ */
+object PcRuntime {
+    @Volatile var name: String = "LM Studio"
+}
+
 data class LoadedModel(val key: String, val name: String, val context: Int, val vision: Boolean, val tier: String? = null)
 
 data class GpuInfo(val name: String, val vramTotalMb: Int, val vramUsedMb: Int, val util: Int, val tempC: Int)
@@ -145,6 +153,7 @@ data class PcStatus(
     companion object {
         fun parse(o: JsonObject): PcStatus {
             val lm = o.obj("lm")
+            lm?.str("runtimeName")?.takeIf { it.isNotBlank() }?.let { PcRuntime.name = it }
             return PcStatus(
                 lm = when (lm?.str("state")) {
                     "running" -> LmState.RUNNING

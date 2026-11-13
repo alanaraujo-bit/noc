@@ -1,5 +1,6 @@
 package com.noc.app.ui.onboarding
 
+import com.noc.app.core.net.PcRuntime
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
@@ -69,9 +70,9 @@ import kotlinx.serialization.json.put
 private data class Page(val title: String, val body: String, val art: Int)
 
 private val pages = listOf(
-    Page("Sua IA.\nSeu computador.\nSeus dados.", "Converse de qualquer lugar com os modelos que rodam no LM Studio do seu PC — como num app de IA, mas tudo seu.", 0),
-    Page("O trabalho pesado\nfica no PC.", "Seu celular envia a pergunta; o computador pensa e responde em tempo real. Por isso ele precisa estar ligado, com o LM Studio instalado.", 1),
-    Page("Três passos\nno computador.", "1. Instale o LM Studio e baixe um modelo.\n2. Instale e abra o Noc Companion — ele encontra o LM Studio sozinho.\n3. No Companion, toque em “Parear celular”.", 2),
+    Page("Sua IA.\nSeu computador.\nSeus dados.", "Converse de qualquer lugar com os modelos de IA que rodam no seu PC — como num app de IA, mas tudo seu.", 0),
+    Page("O trabalho pesado\nfica no PC.", "Seu celular envia a pergunta; o computador pensa e responde em tempo real. Por isso ele precisa estar ligado, com o LM Studio ou o Ollama instalado.", 1),
+    Page("Três passos\nno computador.", "1. Instale o LM Studio ou o Ollama e baixe um modelo.\n2. Instale e abra o Noc Companion — ele encontra o motor de IA sozinho.\n3. No Companion, toque em “Parear celular”.", 2),
     Page("Privado de\nponta a ponta.", "A conversa sai cifrada do celular e só abre no seu PC. Nem o serviço que conecta vocês pela internet consegue ler. Nada vai para a nuvem.", 3),
 )
 
@@ -208,16 +209,16 @@ fun SetupCheckScreen(container: AppContainer, onDone: (String?) -> Unit) {
         Spacer(Modifier.height(24.dp))
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             CheckRow("Pareado com o PC", if (connected) Check.OK else Check.RUNNING, (conn as? ConnState.Online)?.let { "${it.pc.name} · ${Texts.route(it.route)}" })
-            CheckRow("LM Studio ativo", when { !connected -> Check.PENDING; lmOk -> Check.OK; status == null -> Check.RUNNING; else -> Check.FAIL },
+            CheckRow("${PcRuntime.name} ativo", when { !connected -> Check.PENDING; lmOk -> Check.OK; status == null -> Check.RUNNING; else -> Check.FAIL },
                 if (connected && status != null && !lmOk) "O servidor local está desligado." else null)
             if (connected && status != null && !lmOk && status?.lm != LmState.NOT_INSTALLED) {
-                SecondaryButton(if (startingLm) "Iniciando…" else "Iniciar LM Studio no PC", enabled = !startingLm, modifier = Modifier.padding(start = 40.dp)) {
+                SecondaryButton(if (startingLm) "Iniciando…" else "Iniciar ${PcRuntime.name} no PC", enabled = !startingLm, modifier = Modifier.padding(start = 40.dp)) {
                     startingLm = true
                     scope.launch { runCatching { container.connection.call("lms.start", timeoutMs = 100_000) }; startingLm = false }
                 }
             }
             CheckRow("Modelos disponíveis", when { !lmOk -> Check.PENDING; hasModel -> Check.OK; else -> Check.FAIL },
-                if (lmOk && !hasModel) "Baixe um modelo no LM Studio." else status?.let { if (hasModel) "${it.llmCount} modelo(s) no PC" else null })
+                if (lmOk && !hasModel) "Baixe um modelo no ${PcRuntime.name}." else status?.let { if (hasModel) "${it.llmCount} modelo(s) no PC" else null })
             CheckRow("Primeira resposta", testState, testError ?: tps?.let { "%.0f tokens/s".format(it) })
             if (reply.isNotBlank()) {
                 Text(

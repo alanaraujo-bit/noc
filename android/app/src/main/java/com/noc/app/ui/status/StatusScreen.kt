@@ -1,5 +1,6 @@
 package com.noc.app.ui.status
 
+import com.noc.app.core.net.PcRuntime
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -76,7 +77,7 @@ fun StatusScreen(container: AppContainer, nav: NavHostController) {
                 GroupDivider()
                 Line("Companion", if (online != null) "Online" + (s?.companion?.let { " · v$it" } ?: "") else "—", dot = if (online != null) c.ok else c.text3)
                 GroupDivider()
-                Line("LM Studio", when (s?.lm) {
+                Line("${PcRuntime.name}", when (s?.lm) {
                     LmState.RUNNING -> "Online"
                     LmState.STOPPED -> "Parado"
                     LmState.NOT_INSTALLED -> "Não instalado"

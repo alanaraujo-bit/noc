@@ -1,5 +1,6 @@
 package com.noc.app.ui.home
 
+import com.noc.app.core.net.PcRuntime
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -140,7 +141,7 @@ fun HomeScreen(container: AppContainer, prefs: AppPrefs, nav: NavHostController)
                         scope.launch {
                             val ok = runCatching { container.connection.call("lms.start", timeoutMs = 100_000) }.isSuccess
                             startingLm = false
-                            if (!ok) Toast.makeText(context, "Não foi possível iniciar o LM Studio. Abra-o no PC.", Toast.LENGTH_LONG).show()
+                            if (!ok) Toast.makeText(context, "Não foi possível iniciar o ${PcRuntime.name}. Abra-o no PC.", Toast.LENGTH_LONG).show()
                         }
                     },
                 )
@@ -246,7 +247,7 @@ private fun PcPanel(
                 Text("Conecte seu computador", style = MaterialTheme.typography.titleLarge, color = c.text)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "O Noc conversa com as IAs que rodam no LM Studio do seu PC. Abra o Noc Companion no computador e pareie em segundos.",
+                    "O Noc conversa com as IAs que rodam no seu PC (LM Studio ou Ollama). Abra o Noc Companion no computador e pareie em segundos.",
                     style = MaterialTheme.typography.bodyMedium, color = c.text2,
                 )
                 Spacer(Modifier.height(16.dp))
@@ -331,16 +332,16 @@ private fun OnlineBody(status: PcStatus?, startingLm: Boolean, onModels: () -> U
     }
     when {
         status.lm == LmState.NOT_INSTALLED -> {
-            Text("LM Studio não encontrado", style = MaterialTheme.typography.titleMedium, color = c.text)
-            Text("Instale o LM Studio no PC e baixe um modelo. O Companion detecta sozinho.", style = MaterialTheme.typography.bodyMedium, color = c.text2)
+            Text("${PcRuntime.name} não encontrado", style = MaterialTheme.typography.titleMedium, color = c.text)
+            Text("Instale o ${PcRuntime.name} no PC e baixe um modelo. O Companion detecta sozinho.", style = MaterialTheme.typography.bodyMedium, color = c.text2)
             return
         }
         status.lm != LmState.RUNNING -> {
-            Text("LM Studio não está disponível", style = MaterialTheme.typography.titleMedium, color = c.text)
+            Text("${PcRuntime.name} não está disponível", style = MaterialTheme.typography.titleMedium, color = c.text)
             Spacer(Modifier.height(4.dp))
-            Text("O servidor local do LM Studio está desligado. Posso ligá-lo para você, direto do PC.", style = MaterialTheme.typography.bodyMedium, color = c.text2)
+            Text("O servidor local do ${PcRuntime.name} está desligado. Posso ligá-lo para você, direto do PC.", style = MaterialTheme.typography.bodyMedium, color = c.text2)
             Spacer(Modifier.height(14.dp))
-            PrimaryButton(if (startingLm) "Iniciando…" else "Iniciar LM Studio", height = 44.dp, enabled = !startingLm, onClick = onStartLm)
+            PrimaryButton(if (startingLm) "Iniciando…" else "Iniciar ${PcRuntime.name}", height = 44.dp, enabled = !startingLm, onClick = onStartLm)
             return
         }
     }

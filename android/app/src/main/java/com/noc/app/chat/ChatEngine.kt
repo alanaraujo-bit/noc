@@ -1,5 +1,6 @@
 package com.noc.app.chat
 
+import com.noc.app.core.net.PcRuntime
 import android.content.Context
 import android.util.Base64
 import com.noc.app.core.net.ConnState
@@ -120,7 +121,7 @@ data class LiveReply(
             Phase.THINKING -> "Pensando…"
             Phase.GENERATING -> "Gerando…"
             Phase.RECOVERING -> "Retomando no PC…"
-            Phase.WAITING_LM -> "Esperando o LM Studio ficar pronto no PC…"
+            Phase.WAITING_LM -> "Esperando o ${PcRuntime.name} ficar pronto no PC…"
             else -> "Trabalhando no seu PC…"
         }
     }

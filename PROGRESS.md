@@ -309,4 +309,7 @@ PC novo (i5-14600K, RTX 3090 Ti 24 GB) sem LM Studio: os modelos rodam no Ollama
   (`main`, pasta `/relay`, só reconstrói quando `relay/**` muda), 1 réplica em us-east4, mesmo endereço de antes
   (`wss://noc-relay-production.up.railway.app`). Teste `Relay_stream_resume_cancel_and_revoke` com o Ollama: passou
   (pareamento, streaming a 96,9 tok/s, retomada, cancelamento e revogação pelo relay).
-- App Android: sem mudanças; os textos ainda dizem "LM Studio".
+- App Android 1.4.0 (versionCode 5): mostra o motor que o PC informa (`status.lm.runtimeName` → `PcRuntime.name`), textos de boas-vindas
+  neutros ("LM Studio ou Ollama"), erro `lm_rejected` tratado. Compilado com JDK 17 + Android SDK em `~\.local` (`android/local.properties`),
+  17 testes unitários passando, assinado com a mesma chave do 1.1.0 (certificado SHA-256 2f247fa7…85789d conferido contra o APK da
+  release pública), então atualiza por cima sem perder conversas. NÃO testado em emulador nem em celular. APK: `dist/Noc-1.4.0.apk`.

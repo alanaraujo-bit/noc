@@ -1,5 +1,6 @@
 package com.noc.app.ui.diagnostics
 
+import com.noc.app.core.net.PcRuntime
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -88,7 +89,7 @@ fun DiagnosticsScreen(container: AppContainer, nav: NavHostController) {
         items.clear()
         listOf(
             "Internet no celular", "Serviço de conexão remota", "PC online", "Companion respondendo",
-            "Autenticação", "LM Studio", "Modelo", "Rede local", "Geração de teste",
+            "Autenticação", "${PcRuntime.name}", "Modelo", "Rede local", "Geração de teste",
             "Perfis e modelos", "Imagens (visão)", "Ditado por voz", "Notificações",
         ).forEach { items.add(Item(it)) }
         scope.launch {
@@ -164,9 +165,9 @@ fun DiagnosticsScreen(container: AppContainer, nav: NavHostController) {
             val status = runCatching { com.noc.app.core.net.PcStatus.parse(cm.call("status")) }.getOrNull()
             when (status?.lm) {
                 LmState.RUNNING -> set(5, St.OK, "Servidor local ativo")
-                LmState.STOPPED -> set(5, St.FAIL, "Servidor desligado", "Toque em “Iniciar LM Studio” na tela inicial ou abra o LM Studio no PC.")
-                LmState.NOT_INSTALLED -> set(5, St.FAIL, "Não encontrado", "Instale o LM Studio no PC (lmstudio.ai) e baixe um modelo.")
-                else -> set(5, St.FAIL, "Sem resposta do LM Studio", "Reinicie o LM Studio no PC.")
+                LmState.STOPPED -> set(5, St.FAIL, "Servidor desligado", "Toque em “Iniciar ${PcRuntime.name}” na tela inicial ou abra o ${PcRuntime.name} no PC.")
+                LmState.NOT_INSTALLED -> set(5, St.FAIL, "Não encontrado", "Instale o ${PcRuntime.name} no PC e baixe um modelo.")
+                else -> set(5, St.FAIL, "Sem resposta do ${PcRuntime.name}", "Reinicie o ${PcRuntime.name} no PC.")
             }
             // 7. modelo
             set(6, St.RUN)
@@ -175,7 +176,7 @@ fun DiagnosticsScreen(container: AppContainer, nav: NavHostController) {
                 status?.lm != LmState.RUNNING -> set(6, St.SKIP)
                 status.loaded.isNotEmpty() -> set(6, St.OK, "${status.loaded.first().name} · ${Texts.tokens(status.loaded.first().context)} ctx")
                 models.isNotEmpty() -> set(6, St.WARN, "Nenhum carregado (${models.size} disponível)", "Tudo bem: o modelo é carregado sozinho ao enviar. Para ser mais rápido, carregue um em Modelos.")
-                else -> set(6, St.FAIL, "Nenhum modelo no PC", "Baixe um modelo de conversa no LM Studio.")
+                else -> set(6, St.FAIL, "Nenhum modelo no PC", "Baixe um modelo de conversa no ${PcRuntime.name}.")
             }
             // 8. LAN
             set(7, St.RUN)
@@ -224,7 +225,7 @@ fun DiagnosticsScreen(container: AppContainer, nav: NavHostController) {
             set(10, St.RUN)
             val visionModels = fresh.filter { it.isLlm && it.vision && it.fitsGpu != false }
             if (visionModels.isNotEmpty()) set(10, St.OK, visionModels.joinToString(" · ") { it.name })
-            else set(10, St.WARN, "Nenhum modelo com visão", "Baixe um modelo com visão (ex.: Qwen 3.5 VL, Gemma 4) no LM Studio ou coloque o GGUF e o mmproj no Downloads: o Companion adiciona sozinho.")
+            else set(10, St.WARN, "Nenhum modelo com visão", "Baixe um modelo com visão (ex.: Qwen 3.5 VL, Gemma 4) no ${PcRuntime.name} ou coloque o GGUF e o mmproj no Downloads: o Companion adiciona sozinho.")
             // 12. voz
             set(11, St.RUN)
             val stt = status?.stt

@@ -19,7 +19,7 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
 enum class LockPrivacy { FULL, NOTICE, HIDDEN }
 
 /** Termos que o ditado deve reconhecer (vão como dica para o Whisper no PC). */
-val DefaultVocab = listOf("Aionix", "Railway", "Vercel", "MikroTik", "PostgreSQL", "LM Studio", "GGUF", "Qwen", "Gemma", "Noc")
+val DefaultVocab = listOf("Aionix", "Railway", "Vercel", "MikroTik", "PostgreSQL", "LM Studio", "Ollama", "GGUF", "Qwen", "Gemma", "Noc")
 
 data class AppPrefs(
     val theme: ThemeMode = ThemeMode.SYSTEM,

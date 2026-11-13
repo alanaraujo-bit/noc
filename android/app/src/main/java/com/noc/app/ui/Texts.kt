@@ -1,5 +1,6 @@
 package com.noc.app.ui
 
+import com.noc.app.core.net.PcRuntime
 import com.noc.app.core.net.ConnState
 import com.noc.app.core.net.LmState
 import com.noc.app.core.net.PcStatus
@@ -76,8 +77,8 @@ object Texts {
         is ConnState.Offline -> problem(state.problem).title + "."
         is ConnState.Online -> when {
             status == null -> "Conectado a ${state.pc.name}."
-            status.lm == LmState.NOT_INSTALLED -> "LM Studio não encontrado no PC."
-            status.lm != LmState.RUNNING -> "LM Studio não está disponível."
+            status.lm == LmState.NOT_INSTALLED -> "${PcRuntime.name} não encontrado no PC."
+            status.lm != LmState.RUNNING -> "${PcRuntime.name} não está disponível."
             status.op?.kind == "loading" -> "Carregando modelo…"
             status.jobs.isNotEmpty() -> "Seu PC está respondendo."
             status.loaded.isEmpty() -> "Nenhum modelo está carregado."
@@ -92,18 +93,18 @@ object Texts {
         val code = raw?.substringBefore('|') ?: ""
         val detail = raw?.substringAfter('|', "") ?: ""
         return when {
-            code == "lm_offline_final" -> "O LM Studio não voltou a funcionar no PC. Abra o LM Studio (ou reinicie o PC) e toque em tentar de novo."
+            code == "lm_offline_final" -> "O ${PcRuntime.name} não voltou a funcionar no PC. Abra o ${PcRuntime.name} (ou reinicie o PC) e toque em tentar de novo."
             code == "no_vision" -> "Este modelo não entende imagens. Escolha um modelo com visão (ex.: Rápido ou Inteligente) e tente de novo."
             code == "stalled" -> "O modelo parou de responder no PC. Tente de novo."
             code == "pc_restarted" -> "Seu PC foi reiniciado antes da conclusão."
-            code == "lm_offline" || code == "lm_unreachable" -> "O LM Studio não está rodando no PC. Abra o LM Studio ou toque em “Iniciar LM Studio” na tela inicial."
+            code == "lm_offline" || code == "lm_unreachable" -> "O ${PcRuntime.name} não está rodando no PC. Abra o ${PcRuntime.name} ou toque em “Iniciar ${PcRuntime.name}” na tela inicial."
             code == "model_not_found" -> "Esse modelo não existe mais no PC. Escolha outro modelo."
             code == "load_failed" -> "O PC não conseguiu carregar o modelo" + (if (detail.contains("memory", true) || detail.contains("VRAM", true)) " — falta memória de vídeo." else ".") + " Tente um modelo menor ou um contexto menor."
             code == "busy" -> "O PC já está gerando várias respostas. Aguarde uma terminar."
             code == "job_unknown" || code == "interrupted" -> "A resposta foi interrompida (o Companion reiniciou)."
             code == "not_llm" -> "Esse modelo não é de conversa."
             code == "lm_error" && (detail.contains("context", true) && detail.contains("length", true)) -> "A conversa ficou maior que o contexto do modelo. Aumente o contexto ou comece uma nova conversa."
-            code == "lm_error" -> "O LM Studio recusou o pedido" + (if (detail.isNotBlank()) ": ${detail.take(140)}" else ".")
+            code == "lm_error" || code == "lm_rejected" -> "O ${PcRuntime.name} recusou o pedido" + (if (detail.isNotBlank()) ": ${detail.take(140)}" else ".")
             code == "not_connected" -> "Sem conexão com o PC."
             else -> "Algo deu errado ao gerar a resposta."
         }
